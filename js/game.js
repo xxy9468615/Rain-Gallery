@@ -4,24 +4,25 @@
  * 进度自动保存（SafeStorage 封装 localStorage，无痕模式自动降级内存），重进续玩
  * ============================================================ */
 
-import { CASE } from './case-data.js?v=3.5.0';
-import { audio, scheduleThunder } from './audio.js?v=3.5.0';
-import { storage } from './storage.js?v=3.5.0';
+import { CASE } from './case-data.js?v=3.6.0';
+import { audio, scheduleThunder } from './audio.js?v=3.6.0';
+import { storage } from './storage.js?v=3.6.0';
 import {
   aiSettings, MODEL_OPTIONS, testConnection, STORAGE_MODE,
   onLoadState, validateTokenFormat,
   proxyState, ENDPOINT_MODE, getEndpointMode, setEndpointMode,
   probeProxy, describeEndpoint, rotateSessionId, aiActive,
   getEndpointUrl, setEndpointUrl, validateEndpointUrl, getEndpointWhitelist, setEndpointWhitelist,
+  getProxyBase, setProxyBase, validateProxyBase,
   DEFAULT_ENDPOINT_URL,
-} from './ai-client.js?v=3.5.0';
+} from './ai-client.js?v=3.6.0';
 import {
   suspectState, stageOf, askSuspect, presentToSuspect,
   greetingOf, juryVerdict, setActionContext, getDecisionLog, applyRel,
-} from './suspect-ai.js?v=3.5.0';
+} from './suspect-ai.js?v=3.6.0';
 import {
   buildProfile, aiProfileReport, radarSVG,
-} from './profiler.js?v=3.5.0';
+} from './profiler.js?v=3.6.0';
 
 const $ = (id) => document.getElementById(id);
 const SAVE_KEY = 'rain-gallery-save';
@@ -2193,6 +2194,28 @@ function initSettings() {
     wlInput.value = getEndpointWhitelist().join('\n');
   }
 
+  /* v3.6 · 免费通道代理基址：初始化 + 实时校验 */
+  const pbInput = $('settings-proxy-base');
+  if (pbInput) {
+    pbInput.value = getProxyBase();
+    const reflectProxy = () => {
+      const hint = $('proxy-base-hint');
+      if (!hint) return;
+      const raw = pbInput.value.trim();
+      if (!raw) {
+        hint.textContent = '✓ 同源（默认）——适合后端与前端同域部署';
+        hint.className = 'hint-line ok-text';
+        return;
+      }
+      const check = validateProxyBase(raw);
+      hint.textContent = check.ok ? `✓ 代理基址：${check.origin}` : `✗ ${check.message}`;
+      hint.className = `hint-line ${check.ok ? 'ok-text' : 'err-text'}`;
+    };
+    pbInput.addEventListener('input', reflectProxy);
+    pbInput.addEventListener('blur', reflectProxy);
+    reflectProxy();
+  }
+
   // 明文切换
   const visBtn = $('btn-toggle-token-vis');
   if (visBtn) {
@@ -2236,6 +2259,18 @@ function initSettings() {
     }
     if (wlInput) setEndpointWhitelist(wlInput.value);
 
+    // v3.6 · 代理基址校验（不合格不落盘，避免把请求发往非预期后端）
+    const proxyChanged = pbInput ? pbInput.value.trim() !== getProxyBase() : false;
+    if (pbInput) {
+      const check = validateProxyBase(pbInput.value);
+      if (!check.ok) {
+        st.className = 'err';
+        st.textContent = `✗ 代理基址未保存：${check.message}`;
+        return;
+      }
+      setProxyBase(pbInput.value);
+    }
+
     const mode = modeEnc && modeEnc.checked ? STORAGE_MODE.ENCRYPTED : STORAGE_MODE.MEMORY;
     await aiSettings.setToken(rawToken, mode);
 
@@ -2250,13 +2285,24 @@ function initSettings() {
 
     updateAIBadge();
     updateIntroAICard();
+    // v3.6 · 代理基址变更后免费通道可用性需重新探测（原结论基于旧地址）
+    if (proxyChanged) {
+      st.className = 'ok';
+      st.textContent = '↻ 正在重新探测免费通道…';
+      await probeProxy();
+      syncEndpointUI();
+      updateAIBadge();
+      updateIntroAICard();
+    }
     const modeDesc = mode === STORAGE_MODE.ENCRYPTED ? '已启用 AES-GCM-256 加密存储' : '已启用纯内存阅后即焚模式';
     st.className = 'ok';
     st.textContent = aiSettings.hasToken()
       ? `✓ 已保存（${modeDesc}，AI 实时扮演生效）`
-      : (proxyState.available
+      : (proxyState.checked && proxyState.available
         ? '✓ 已保存（未填 Token，将使用内置免费通道）'
-        : '⚠ 未接入任何 AI 通道：本作仅支持 AI 模式，请填写 Token 或等待免费通道恢复');
+        : (proxyState.checked
+          ? '⚠ 未接入任何 AI 通道：免费通道不可用，本作仅支持 AI 模式，请填写 Token'
+          : '⚠ 未接入任何 AI 通道：免费通道探测未完成，请点「测试连接」重试'));
     // 引导链路收尾：配置成功 → 小手退场
     if (aiSettings.hasToken() && handTarget) {
       hideHand();

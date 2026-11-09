@@ -6,8 +6,8 @@
  * - 雷达图：纯代码 SVG 绘制，延续零素材风格
  * ============================================================ */
 
-import { CASE } from './case-data.js?v=3.5.0';
-import { chatCompletion, withTimeout } from './ai-client.js?v=3.5.0';
+import { CASE } from './case-data.js?v=3.6.0';
+import { chatCompletion, withTimeout } from './ai-client.js?v=3.6.0';
 
 /* ---------------- 五维能力定义 ---------------- */
 

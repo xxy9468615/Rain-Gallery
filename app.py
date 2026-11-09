@@ -28,6 +28,7 @@ from datetime import date
 import httpx
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -54,6 +55,19 @@ def _global_cap():
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 app = FastAPI(title="Rain Gallery Free-AI Proxy", docs_url=None, redoc_url=None)
+
+# ---------------- CORS（静态托管的前端需要跨域调用本代理） ----------------
+# 默认放开 GET /api/status 与 OPTIONS 预检，POST 通过 CORS_ALLOWED_ORIGINS 白名单约束；
+# 留空则等同任意 Origin（仅建议本地开发使用）。Authorization 头予以允许，
+# 但本代理免费通道一律由服务端持有 Key，前端传什么都不生效。
+_CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_CORS_ORIGINS or ["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Session-Id"],
+)
 
 # ---------------- 计数额（内存态，重启清零；不含任何对话内容） ----------------
 _sessions = {}   # sessionId -> {"chat": int, "judge": int}

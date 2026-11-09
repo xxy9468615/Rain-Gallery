@@ -18,7 +18,7 @@
  * 供自动化端到端测试在无 Key 环境驱动 NPC 行动分支。
  * ============================================================ */
 
-import { storage } from './storage.js?v=3.5.0';
+import { storage } from './storage.js?v=3.6.0';
 
 /**
  * 自定义端点（v3.5）
@@ -45,9 +45,56 @@ export const ENDPOINT_PRESETS = [
   { id: 'custom', label: '自定义端点…', url: '' },
 ];
 
-const PROXY_CHAT_URL = '/api/chat';
-const PROXY_JUDGE_URL = '/api/judge';
-const PROXY_STATUS_URL = '/api/status';
+/**
+ * 免费通道代理基址（v3.6）
+ * ------------------------------------------------------------
+ * 默认同源（/api/*），适合后端与前端同域部署（如魔搭创空间）。
+ * 静态托管（如 GitHub Pages）时填独立后端的完整地址即可跨域访问，
+ * 服务端需开启 CORS（app.py 已支持，通过 CORS_ALLOWED_ORIGINS 白名单约束）。
+ * 留空则回退同源相对路径。
+ */
+const LS_PROXY_BASE = 'rain-gallery-proxy-base';
+
+export function getProxyBase() {
+  const v = (storage.getItem(LS_PROXY_BASE) || '').trim().replace(/\/+$/, '');
+  return v;
+}
+
+export function setProxyBase(url) {
+  const clean = String(url || '').trim().replace(/\/+$/, '');
+  if (!clean) { storage.removeItem(LS_PROXY_BASE); return ''; }
+  storage.setItem(LS_PROXY_BASE, clean);
+  return clean;
+}
+
+/** 校验代理基址：绝对 URL + http(s) + 不含凭据 */
+export function validateProxyBase(url) {
+  const raw = String(url || '').trim().replace(/\/+$/, '');
+  if (!raw) return { ok: true, message: '同源（默认）' };
+  let u;
+  try { u = new URL(raw); } catch (e) {
+    return { ok: false, message: '不是合法的 URL' };
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') {
+    return { ok: false, message: `不支持的协议：${u.protocol}` };
+  }
+  if (u.username || u.password) {
+    return { ok: false, message: 'URL 中不能包含账号密码' };
+  }
+  if (u.pathname && u.pathname !== '/') {
+    return { ok: false, message: '只填基址（如 https://host），不要带路径' };
+  }
+  return { ok: true, message: 'ok', origin: u.origin };
+}
+
+const proxyUrl = (path) => {
+  const base = getProxyBase();
+  return base ? `${base}${path}` : path;
+};
+
+const PROXY_CHAT_PATH = '/api/chat';
+const PROXY_JUDGE_PATH = '/api/judge';
+const PROXY_STATUS_PATH = '/api/status';
 
 /** 当前自定义端点（带容错读取与归一化） */
 export function getEndpointUrl() {
@@ -418,7 +465,7 @@ export async function probeProxy() {
     return { ...proxyState };
   }
   try {
-    const resp = await fetch(PROXY_STATUS_URL, { headers: { 'X-Session-Id': getSessionId() } });
+    const resp = await fetch(proxyUrl(PROXY_STATUS_PATH), { headers: { 'X-Session-Id': getSessionId() } });
     if (!resp.ok) throw new Error(String(resp.status));
     const data = await resp.json();
     proxyState.available = !!data.available;
@@ -606,7 +653,7 @@ async function _rawProxy(messages, opts = {}) {
   };
   let resp;
   try {
-    resp = await fetch(judge ? PROXY_JUDGE_URL : PROXY_CHAT_URL, {
+    resp = await fetch(judge ? proxyUrl(PROXY_JUDGE_PATH) : proxyUrl(PROXY_CHAT_PATH), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Session-Id': getSessionId() },
       body: JSON.stringify(body),
@@ -787,7 +834,7 @@ export async function chatCompletionStream(messages, opts = {}) {
     : (getEndpointMode() === ENDPOINT_MODE.FREE ? (proxyState.available || !hasCustom) : !hasCustom);
 
   if (preferProxy) {
-    const resp = await fetch(judge ? PROXY_JUDGE_URL : PROXY_CHAT_URL, {
+    const resp = await fetch(judge ? proxyUrl(PROXY_JUDGE_PATH) : proxyUrl(PROXY_CHAT_PATH), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Session-Id': getSessionId() },
       body: JSON.stringify({

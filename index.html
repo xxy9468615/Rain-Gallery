@@ -6,7 +6,7 @@
   <meta name="description" content="《雨夜画廊》—— AI 驱动的微型推理解谜游戏。暴雨夜的画廊，镇馆之宝被毁，三个人三种谎言。AI+∞开发者创作大赛第三期参赛作品。">
   <title>雨夜画廊 · AI 推理解谜</title>
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-  <link rel="stylesheet" href="css/style.css?v=3.5.0">
+  <link rel="stylesheet" href="css/style.css?v=3.6.0">
 </head>
 <body>
   <!-- 背景雨幕与闪电特效层 -->
@@ -336,6 +336,17 @@
           填写后，只有列表内的域名可通过校验——防止配置被篡改后把 Token 发往陌生地址。
         </p>
 
+        <!-- v3.6 · 免费通道代理基址：静态托管时指向独立后端 -->
+        <label class="field-label" for="settings-proxy-base">免费通道代理基址（默认同源 · 静态托管填后端地址）</label>
+        <div class="token-input-row">
+          <input id="settings-proxy-base" type="url" class="text-input"
+            placeholder="留空 = 同源 /api/*；独立后端填 https://your-api.onrender.com" autocomplete="off" spellcheck="false">
+        </div>
+        <p class="hint-line" id="proxy-base-hint" style="text-align:left;margin:6px 0 0;">
+          同源部署（魔搭创空间等）留空即可。若前端与后端分域部署（前端在 GitHub Pages、后端在
+          Render/Railway），填后端的<b>根地址</b>即可跨域调用，服务端需开启 CORS。
+        </p>
+
         <label class="field-label" for="settings-model">扮演模型</label>
         <select id="settings-model" class="text-input"></select>
 
@@ -472,6 +483,6 @@
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite" aria-atomic="true"></div>
 
-  <script type="module" src="js/game.js?v=3.5.0"></script>
+  <script type="module" src="js/game.js?v=3.6.0"></script>
 </body>
 </html>

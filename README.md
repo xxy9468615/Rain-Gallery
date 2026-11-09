@@ -257,3 +257,16 @@ node tools/ai-test.mjs --e2e           # 只跑真实浏览器端到端
 
 - [魔搭 ModelScope](https://modelscope.cn) —— API-Inference 免费模型推理
 - AI+∞ 开发者创作大赛第三期「AI造游戏」
+
+### 🌐 前后端分域部署（v3.6 · 静态托管 + 独立后端）
+
+前端静态托管（GitHub Pages / Vercel / Netlify）不含 `/api/*`，免费通道默认置灰。若已把
+`app.py` 部署到独立后端，只需在设置里填：
+
+| 字段 | 填法 | 说明 |
+|---|---|---|
+| **免费通道代理基址** | `https://your-api.onrender.com` | 只填根地址，**不带** `/api` 路径 |
+| **AI 接口来源** | 🎁 免费内置 | 前端会跨域请求上面的基址 |
+
+服务端需开启 CORS，`app.py` 已内置：设 `CORS_ALLOWED_ORIGINS=https://xxx.github.io`
+限定来源，留空则任意 Origin（仅建议本地开发用）。代理仍只计数额、不记录对话内容。

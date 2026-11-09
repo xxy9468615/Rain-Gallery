@@ -7,7 +7,7 @@
  * - 开场 15 秒旁白音频驱动器（带精准时间码与平滑淡出）
  * ============================================================ */
 
-import { storage } from './storage.js?v=3.5.0';
+import { storage } from './storage.js?v=3.6.0';
 
 class AudioEngine {
   constructor() {

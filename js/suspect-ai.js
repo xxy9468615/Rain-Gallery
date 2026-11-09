@@ -8,10 +8,10 @@
  * - NPC 决策日志（decisionLog）：每轮记录 action/校验/deltas/crack，评委可见闭环证据
  * ============================================================ */
 
-import { CASE } from './case-data.js?v=3.5.0';
+import { CASE } from './case-data.js?v=3.6.0';
 import {
   chatCompletion, chatCompletionStream, withTimeout, aiActive,
-} from './ai-client.js?v=3.5.0';
+} from './ai-client.js?v=3.6.0';
 
 const HISTORY_LIMIT = 24; // 每嫌疑人保留的对话轮数
 /* 生成额度设计说明（max_tokens 上限，与 app.py MAX_TOKENS_CAP 对应）：
