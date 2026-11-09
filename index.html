@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="description" content="《雨夜画廊》—— AI 驱动的微型推理解谜游戏。暴雨夜的画廊，镇馆之宝被毁，三个人三种谎言。AI+∞开发者创作大赛第三期参赛作品。">
+  <title>雨夜画廊 · AI 推理解谜</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="stylesheet" href="css/style.css?v=3.5.0">
+</head>
+<body>
+  <!-- 背景雨幕与闪电特效层 -->
+  <div id="rain-layer" aria-hidden="true"></div>
+  <div id="lightning-layer" class="lightning-layer" aria-hidden="true"></div>
+
+  <!-- 顶栏 -->
+  <header id="topbar" class="hidden">
+    <div class="brand">雨<span class="brand-dot">·</span>夜<span class="brand-dot">·</span>画<span class="brand-dot">·</span>廊</div>
+    <div class="topbar-right">
+      <!-- 音乐动效律动仪与静音开关 -->
+      <div id="audio-visualizer" class="audio-visualizer" title="声波律动" aria-hidden="true">
+        <span class="v-bar"></span><span class="v-bar"></span><span class="v-bar"></span><span class="v-bar"></span>
+      </div>
+      <button id="btn-mute" class="chip-btn mute-btn" title="音乐开关" aria-label="切换音乐">🔊</button>
+      <span id="phase-label" class="phase-label" aria-live="polite"></span>
+      <span id="queue-badge" class="queue-badge hidden" role="status" aria-live="polite" title="魔搭线路繁忙，自动排队重试中">⏳ 排队中</span>
+      <button id="btn-notebook" class="chip-btn" title="线索册" aria-label="打开线索册">📓 线索册 <b id="notebook-count">0/11</b></button>
+      <button id="btn-settings" class="chip-btn" title="AI 设置" aria-label="打开 AI 设置">⚙️ <b id="ai-badge">检测中…</b></button>
+    </div>
+  </header>
+
+  <main id="app">
+    <!-- 第一幕：开场 -->
+    <section id="phase-intro" class="phase">
+      <div class="intro-wrap">
+        <div class="intro-art" aria-hidden="true"></div>
+        <h1 class="game-title">雨夜画廊</h1>
+        <p class="game-sub">暴雨夜的私人美术馆 · 一幅被毁的镇馆之宝 · 三种谎言</p>
+
+        <!-- 初始封面操作区（等待玩家点击开始，解锁音频手势并防止误跳过） -->
+        <div id="intro-cover-actions" class="intro-cover-actions">
+          <button id="btn-begin-game" class="primary-btn pulse-glow">▶ 点击开始游戏 · 开启案情叙事 (15s)</button>
+
+          <div id="cover-save-actions" class="cover-save-actions hidden">
+            <button id="btn-resume-game" class="ghost-btn">📂 继续上次调查 (<span id="resume-phase-desc"></span>)</button>
+            <button id="btn-clear-save" class="ghost-btn mini-btn" title="清空历史存档">↻ 清空存档重开</button>
+          </div>
+
+          <p class="hint-line">🎧 建议开启声音佩戴耳机 · 纯代码实时合成音效与配乐 · 约 10~20 分钟通关</p>
+        </div>
+
+        <!-- 15秒情景讲述面板（点击开始游戏后播放） -->
+        <div id="narration-container" class="narration-container hidden">
+          <div class="narration-header">
+            <span class="narration-badge">🎙️ 案情速报 · 15 秒情景讲述</span>
+            <span id="narration-countdown" class="narration-countdown">00:15</span>
+          </div>
+          <div class="narration-progress-bar"><div id="narration-progress" class="narration-progress"></div></div>
+          <div id="narration-subtitles" class="narration-subtitles">
+            <p id="sub-1" class="sub-line active">暴雨深夜，一家私人画廊里，镇馆之宝被人划毁，守夜人倒地昏迷。</p>
+            <p id="sub-2" class="sub-line">馆内三名嫌疑人，三种谎言。</p>
+            <p id="sub-3" class="sub-line">天亮之前，你能找出真相吗？</p>
+          </div>
+          <div class="narration-ctrls">
+            <button id="btn-replay-narration" class="ghost-btn mini-btn" title="重播旁白">↺ 重听</button>
+            <button id="btn-skip-intro" class="ghost-btn mini-btn" title="跳过讲述直接开始">跳过讲述 ⏭</button>
+          </div>
+        </div>
+
+        <div id="intro-text" class="intro-text hidden"></div>
+
+        <!-- AI 引导卡片 -->
+        <div id="intro-ai-card" class="intro-ai-card">
+          <div class="ai-card-left">
+            <span class="ai-card-icon">🤖</span>
+            <div class="ai-card-info">
+              <div class="ai-card-title">AI 大模型嫌疑人实时扮演 <span id="intro-ai-badge" class="chip-badge">免费内置</span></div>
+              <div class="ai-card-desc">本作仅支持 AI 模式 · 嫌疑人由大模型实时扮演、决策 · 请确保免费通道可用或自填 Key</div>
+            </div>
+          </div>
+          <button id="btn-intro-config-ai" class="chip-btn">⚙️ 接口设置</button>
+        </div>
+
+        <div class="intro-actions hidden" id="intro-actions">
+          <button id="btn-start" class="primary-btn">推开画廊的玻璃门 → 勘查现场</button>
+          <p class="hint-line">暴雨还在下。在天亮警察赶到前，收集物证并审出真相。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 第二幕：现场调查 -->
+    <section id="phase-invest" class="phase hidden">
+      <div class="invest-layout">
+        <aside class="map-panel">
+          <h3>雨夜画廊 · 平面图</h3>
+          <div id="floor-map"></div>
+          <div class="map-legend">
+            <span class="lg-item"><i class="lg-dot lg-now"></i>当前</span>
+            <span class="lg-item"><i class="lg-dot lg-todo"></i>待勘查</span>
+            <span class="lg-item"><i class="lg-dot lg-done"></i>已清空</span>
+          </div>
+        </aside>
+        <div class="room-panel">
+          <div class="room-head">
+            <h2 id="room-name"></h2>
+            <p id="room-desc"></p>
+          </div>
+          <div id="room-art" class="room-art"></div>
+          <div id="hotspot-hints" class="hotspot-hints"></div>
+        </div>
+      </div>
+      <div class="invest-footer">
+        <button id="btn-to-interrogate" class="primary-btn pulse-glow">现场看得差不多了 → 提审嫌疑人</button>
+      </div>
+    </section>
+
+    <!-- 第三幕：审讯 -->
+    <section id="phase-interrogate" class="phase hidden">
+      <div class="interrogate-layout">
+        <aside id="suspect-list" class="suspect-panel"></aside>
+        <div class="dialog-panel">
+          <div id="dialog-head" class="dialog-head"></div>
+          <div id="dialog-stream" class="dialog-stream"></div>
+          <div id="suggest-questions" class="suggest-questions"></div>
+          <div class="dialog-input-row">
+            <input id="dialog-input" type="text" maxlength="80" placeholder="输入你的问题，回车发送…" autocomplete="off" aria-label="向嫌疑人提问">
+            <button id="btn-send" class="send-btn" title="发送" aria-label="发送问题">➤</button>
+            <button id="btn-present" class="chip-btn">🔍 出示物证</button>
+          </div>
+          <p class="hint-line" id="dialog-hint">自由提问：问到点子上，谎言会出现裂缝。</p>
+        </div>
+      </div>
+      <div class="invest-footer">
+        <button id="btn-back-invest" class="ghost-btn">← 再看看现场</button>
+        <button id="btn-to-verdict" class="primary-btn">我有结论了 → 指认凶手</button>
+      </div>
+    </section>
+
+    <!-- 第四幕：指认 -->
+    <section id="phase-accuse" class="phase hidden">
+      <h2 class="section-title">结案时刻</h2>
+      <p class="section-sub">雨小了。警察还有一小时到。你站在中庭，说出那个名字。</p>
+      <div id="accuse-suspects" class="accuse-suspects"></div>
+      <h3 class="accuse-evidence-title">勾选支撑你指认的物证（可多选）</h3>
+      <div id="accuse-evidences" class="accuse-evidences"></div>
+      <div class="invest-footer">
+        <button id="btn-accuse-back" class="ghost-btn">← 再审一会儿</button>
+        <button id="btn-accuse-submit" class="danger-btn" disabled>庄严指认 ⚖</button>
+      </div>
+    </section>
+
+    <!-- 终幕：结案 -->
+    <section id="phase-final" class="phase hidden">
+      <h2 class="section-title" id="final-title">陪审团合议中…</h2>
+      <div id="jury-box" class="jury-box"></div>
+      <div id="score-box" class="score-box hidden"></div>
+      <div id="epilogue-box" class="epilogue-box hidden"></div>
+      <div id="eval-box" class="eval-box hidden"></div>
+      <div id="truth-box" class="truth-box hidden">
+        <h3>📜 案件时间线（真相还原）</h3>
+        <div id="timeline"></div>
+        <div id="reveal"></div>
+      </div>
+      <div class="invest-footer">
+        <button id="btn-restart" class="ghost-btn">↻ 重玩本局</button>
+      </div>
+      <footer class="game-footer">
+        《雨夜画廊》· AI+∞ 开发者创作大赛第三期「AI造游戏」参赛作品 ·
+        AI 嫌疑人支持 <a href="https://modelscope.cn" target="_blank" rel="noopener">魔搭 ModelScope</a> 免费通道 / 自定义 Key 双模式 ·
+        AI 决策由游戏规则层校验 · 需 AI 通道实时驱动嫌疑人
+      </footer>
+    </section>
+  </main>
+
+  <!-- 线索册弹窗 -->
+  <div id="modal-notebook" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-notebook-title">
+    <div class="modal-card">
+      <div class="modal-head"><h3 id="modal-notebook-title">📓 线索册</h3><button class="modal-close" data-close="modal-notebook" aria-label="关闭线索册">✕</button></div>
+      <div id="notebook-list" class="notebook-list"></div>
+    </div>
+  </div>
+
+  <!-- 物证发现弹窗 -->
+  <div id="modal-evidence" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="evidence-title">
+    <div class="modal-card">
+      <div class="modal-head"><h3 id="evidence-title"></h3><button class="modal-close" data-close="modal-evidence" aria-label="关闭物证详情">✕</button></div>
+      <div id="evidence-body" class="evidence-body"></div>
+    </div>
+  </div>
+
+  <!-- 出示物证选择弹窗 -->
+  <div id="modal-present" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-present-title">
+    <div class="modal-card">
+      <div class="modal-head"><h3 id="modal-present-title">🔍 选择要出示的物证</h3><button class="modal-close" data-close="modal-present" aria-label="关闭出示物证">✕</button></div>
+      <div id="present-list" class="present-list"></div>
+    </div>
+  </div>
+
+  <!-- AI 设置弹窗（v3.0 · 双通道：免费内置代理 / 自定义 Key 直连 + 0 日志加密架构） -->
+  <div id="modal-settings" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-settings-title">
+    <div class="modal-card modal-card-lg">
+      <div class="modal-head"><h3 id="modal-settings-title">⚙️ AI 嫌疑人设置与安全保障</h3><button class="modal-close" data-close="modal-settings" aria-label="关闭设置">✕</button></div>
+      <div class="settings-body">
+
+        <!-- v3.0 · AI 接口来源选择（默认免费内置） -->
+        <div class="field-group">
+          <label class="field-label">AI 接口来源</label>
+          <div class="storage-mode-row">
+            <label class="radio-card">
+              <input type="radio" name="endpoint-mode" value="free" id="endpoint-free" checked>
+              <div class="radio-text">
+                <b>🎁 免费内置（默认 · 零配置）</b>
+                <span>由本作品后端转发至模型服务，开箱即用。<b>后端仅做额度计数，不记录对话内容</b>（代码开源可查）。提问内容会经过作品服务器送达模型。</span>
+                <span id="free-channel-status" class="free-status">…</span>
+              </div>
+            </label>
+            <label class="radio-card">
+              <input type="radio" name="endpoint-mode" value="custom" id="endpoint-custom">
+              <div class="radio-text">
+                <b>🔑 自定义 Key（一人一 Key · 浏览器直连）</b>
+                <span>自填魔搭 Token，请求从你的浏览器直达官方端点，不经过任何中转。可自选模型。</span>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- 自定义 Key 配置区（选择「自定义」时激活） -->
+        <div id="custom-key-block">
+
+        <!-- 0 日志与加密技术白皮书承诺（适用于自定义 Key 直连模式） -->
+        <div class="security-card">
+          <div class="sec-badge">🛡️ 0 日志安全保障 · WebCrypto 加密架构（自定义 Key 模式）</div>
+          <div class="sec-grid">
+            <div class="sec-item">
+              <b>纯前端直连</b>
+              <span>请求直达魔搭官方 <code>api-inference.modelscope.cn</code>，绝无中转代理。</span>
+            </div>
+            <div class="sec-item">
+              <b>控制台静默防护</b>
+              <span>全局控制台拦截器，自动脱敏屏蔽所有 Token，0 泄露风险。</span>
+            </div>
+            <div class="sec-item">
+              <b>出站网络沙箱</b>
+              <span>强制硬校验目标域名，阻断任何第三方旁路或未授权数据外传。</span>
+            </div>
+            <div class="sec-item">
+              <b>内存覆写销毁</b>
+              <span>点击销毁即执行 Zero-Fill 覆写并清除本地缓存，不留任何痕迹。</span>
+            </div>
+            <div class="sec-item">
+              <b>一人一 Key · 零共享池</b>
+              <span>你的 Token 仅存于本机、仅随你的请求直达魔搭官方；无共享池、无中转、无旁路，与他人 Key 互不可见。</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 存储模式选择 -->
+        <div class="field-group">
+          <label class="field-label">Token 存储技术模式</label>
+          <div class="storage-mode-row">
+            <label class="radio-card">
+              <input type="radio" name="storage-mode" value="encrypted" id="mode-encrypted" checked>
+              <div class="radio-text">
+                <b>本地硬件加密（WebCrypto AES-GCM-256 · 推荐）</b>
+                <span>跨刷新免输：经浏览器 AES-256 算法加盐加密，存储中仅存不可读密文。</span>
+              </div>
+            </label>
+            <label class="radio-card">
+              <input type="radio" name="storage-mode" value="memory" id="mode-memory">
+              <div class="radio-text">
+                <b>纯内存驻留（阅后即焚 · 极客模式）</b>
+                <span>仅驻留在 JS 闭包内存，关闭或刷新页面后物理蒸发，磁盘 0 写入。</span>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- 自动销毁策略（多人密钥安全 · 玩家自选时机） -->
+        <div class="field-group">
+          <label class="field-label">Token 自动销毁策略（一人一 Key · 0 日志 · 0 保留）</label>
+          <div class="storage-mode-row">
+            <label class="radio-card">
+              <input type="radio" name="destroy-policy" value="off" checked>
+              <div class="radio-text">
+                <b>不自动销毁（默认）</b>
+                <span>Token 保留至手动销毁；加密模式下跨刷新免重输，随时可手动销毁。</span>
+              </div>
+            </label>
+            <label class="radio-card">
+              <input type="radio" name="destroy-policy" value="idle30m">
+              <div class="radio-text">
+                <b>无操作 30 分钟自动销毁</b>
+                <span>检测到 30 分钟无任何操作即自动 Zero-Fill 销毁（0 保留），挂机离开更安心。</span>
+              </div>
+            </label>
+            <label class="radio-card">
+              <input type="radio" name="destroy-policy" value="caseEnd">
+              <div class="radio-text">
+                <b>结案后自动销毁</b>
+                <span>本案结案评分与侧写报告落盘后即刻销毁，一案一 Key，最高安全标准。</span>
+              </div>
+            </label>
+            <label class="radio-card">
+              <input type="radio" name="destroy-policy" value="pageClose">
+              <div class="radio-text">
+                <b>关闭页面即焚</b>
+                <span>页面关闭/切后台即自动销毁，磁盘 0 留存，等价阅后即焚极客模式。</span>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <label class="field-label" for="settings-token">API Token（一人一 Key）</label>
+        <div class="token-input-row">
+          <input id="settings-token" type="password" class="text-input" placeholder="ms-xxxxxxxxxxxxxxxx" autocomplete="off">
+          <button id="btn-toggle-token-vis" class="chip-btn" type="button" title="查看/隐藏明文">👁</button>
+        </div>
+
+        <!-- v3.5 · 自定义端点（可对接任意 OpenAI 兼容服务，不再写死单一厂商） -->
+        <label class="field-label" for="settings-endpoint">接口端点（OpenAI 兼容 · 默认魔搭官方）</label>
+        <div class="token-input-row">
+          <select id="settings-endpoint-preset" class="text-input" style="flex:0 0 178px;">
+            <option value="modelscope">魔搭 ModelScope（官方）</option>
+            <option value="custom">自定义端点…</option>
+          </select>
+          <input id="settings-endpoint" type="url" class="text-input" placeholder="https://api-inference.modelscope.cn/v1/chat/completions" autocomplete="off" spellcheck="false">
+        </div>
+        <p class="hint-line" id="endpoint-hint" style="text-align:left;margin:6px 0 0;">
+          默认直连魔搭官方；也可填自建网关 / 其他厂商 / 本地推理服务的 OpenAI 兼容地址。
+        </p>
+
+        <label class="field-label" for="settings-endpoint-whitelist">端点域名白名单（可选 · 每行一个，留空不限制）</label>
+        <textarea id="settings-endpoint-whitelist" class="text-input" rows="2"
+          placeholder="api-inference.modelscope.cn&#10;api.openai.com" autocomplete="off" spellcheck="false"></textarea>
+        <p class="hint-line" id="whitelist-hint" style="text-align:left;margin:6px 0 0;">
+          填写后，只有列表内的域名可通过校验——防止配置被篡改后把 Token 发往陌生地址。
+        </p>
+
+        <label class="field-label" for="settings-model">扮演模型</label>
+        <select id="settings-model" class="text-input"></select>
+
+        <details class="settings-help">
+          <summary>如何免费获取 Token？（30 秒开通）</summary>
+          <ol>
+            <li>打开 <a href="https://modelscope.cn/my/myaccesstoken" target="_blank" rel="noopener">modelscope.cn → 访问令牌</a>（需登录）</li>
+            <li>点击「创建新的访问令牌」，勾选 <b>API-Inference</b> 权限</li>
+            <li>复制生成的 <code>ms-</code> 开头令牌，粘贴到上面输入框</li>
+          </ol>
+        </details>
+
+        <details class="settings-help">
+          <summary>🔍 极客自检：如何使用浏览器 F12 验证 0 日志与直连？</summary>
+          <p class="audit-note">
+            按 <b>F12</b> 打开开发者工具 → 切换至 <b>Network（网络）</b> 选项卡 → 提问嫌疑人：<br>
+            您将亲眼看到唯一的出站请求直接发往 <code>api-inference.modelscope.cn</code>，绝无任何其他第三方域名或数据回传。
+          </p>
+        </details>
+
+        </div><!-- /custom-key-block -->
+
+        <div class="settings-actions">
+          <button id="btn-save-settings" class="primary-btn">保存配置</button>
+          <button id="btn-test-settings" class="ghost-btn">测试连接</button>
+          <button id="btn-clear-settings" class="danger-btn-mini">销毁 Token</button>
+          <span id="settings-status"></span>
+        </div>
+        <p class="settings-note dim">免费通道开箱即用；本作仅支持 AI 模式——若两种通道都不可用，游戏会阻断并提示你重新接入。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 首次上手引导弹窗（玩法三步 + AI 接入指引 + 小手点击引导） -->
+  <div id="modal-guide" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-guide-title">
+    <div class="modal-card modal-card-lg guide-card">
+      <div class="modal-head"><h3 id="modal-guide-title">🖐 侦探上手指南</h3><button class="modal-close" data-close="modal-guide" aria-label="关闭引导">✕</button></div>
+      <div class="guide-dots">
+        <span id="guide-dot-1" class="g-dot on"></span>
+        <span id="guide-dot-2" class="g-dot"></span>
+        <span id="guide-dot-3" class="g-dot"></span>
+      </div>
+
+      <!-- 第 1 步：玩法三步 -->
+      <div id="guide-step-1" class="guide-step">
+        <p class="guide-lead">雨夜、毁掉的画、三个说谎的人。你的侦破之路只有三步：</p>
+        <div class="guide-cards">
+          <div class="g-card"><span class="g-ic">🔦</span><b>勘查现场</b><span>在 5 个房间点击<b>闪烁的光点</b>收集 11 条物证，左侧平面图实时显示各房间进度。</span></div>
+          <div class="g-card"><span class="g-ic">🗣️</span><b>审讯嫌疑人</b><span>自由提问、出示物证，问到点子上谎言会出现裂缝，防线会一段段崩塌。</span></div>
+          <div class="g-card"><span class="g-ic">⚖️</span><b>指认凶手</b><span>勾选支撑指认的定罪证据链，在警察到来前说出那个名字。</span></div>
+        </div>
+        <p class="hint-line">进度自动保存，随时可关页面下次续玩。</p>
+      </div>
+
+      <!-- 第 2 步：AI 接入价值 -->
+      <div id="guide-step-2" class="guide-step hidden">
+        <p class="guide-lead">本作的嫌疑人由 <b>魔搭 ModelScope 大模型实时扮演</b>——没有 AI 接入就无法继续。请确认以下能力：</p>
+        <div class="guide-ai-rows">
+          <div class="g-row">🤖 <span><b>实时扮演</b> — 三名嫌疑人由大模型现场发挥，每次审讯都不一样</span></div>
+          <div class="g-row">🕵️ <span><b>AI 能力侧写</b> — 结案后根据你的行为痕迹生成专属侦探能力报告</span></div>
+          <div class="g-row">🛡️ <span><b>0 日志安全</b> — 请求直达魔搭官方，Token 加密存储，无任何第三方回传</span></div>
+        </div>
+        <div id="guide-ai-state"></div>
+        <details class="settings-help">
+          <summary>如何免费获取 Token？（30 秒开通）</summary>
+          <ol>
+            <li>打开 <a href="https://modelscope.cn/my/myaccesstoken" target="_blank" rel="noopener">modelscope.cn → 访问令牌</a>（需登录）</li>
+            <li>点击「创建新的访问令牌」，勾选 <b>API-Inference</b> 权限</li>
+            <li>复制生成的 <code>ms-</code> 开头令牌，粘贴进设置输入框</li>
+          </ol>
+        </details>
+      </div>
+
+      <!-- 第 3 步：完成 -->
+      <div id="guide-step-3" class="guide-step hidden">
+        <p class="guide-lead">准备好了吗，侦探？🌧️</p>
+        <p class="guide-final-note">雨还在下——守夜人的脉搏在变弱，警察要到天亮才能进山。</p>
+      </div>
+
+      <div class="guide-actions">
+        <button id="btn-guide-prev" class="ghost-btn hidden">← 上一步</button>
+        <button id="btn-guide-next" class="primary-btn">下一步 →</button>
+        <button id="btn-guide-go-config" class="primary-btn pulse-glow hidden">⚙️ 现在去配置（推荐 · 30秒）</button>
+        <button id="btn-guide-skip" class="ghost-btn mini-btn">跳过引导</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- v3.2 · AI 通道阻断提示（游戏仅支持 AI 模式，无离线回退） -->
+  <div id="modal-ai-blocked" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-ai-blocked-title">
+    <div class="modal-card modal-confirm-card">
+      <div class="modal-head"><h3 id="modal-ai-blocked-title">🤖 AI 通道不可用</h3><button class="modal-close" data-close="modal-ai-blocked" aria-label="关闭提示">✕</button></div>
+      <p class="confirm-message">本作的嫌疑人由大模型实时扮演与决策——没有 AI 连接，这一局就无法继续（本作不支持离线剧本）。</p>
+      <p class="confirm-message">原因：<span id="ai-blocked-detail"></span></p>
+      <p class="confirm-message">你可以：
+        <br>1) 点「重试」再试一次（通常是网络或上游繁忙）；
+        <br>2) 到 ⚙️ 设置 →「AI 接口来源」填写<b>自定义 Key</b>（浏览器直连官方端点）；
+        <br>3) 稍后刷新页面，等待免费通道恢复。
+      </p>
+      <div class="confirm-actions">
+        <button id="btn-ai-blocked-settings" class="ghost-btn">⚙️ 去设置</button>
+        <button id="btn-ai-blocked-retry" class="primary-btn">↻ 重试</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 游戏内确认弹窗（替代浏览器原生 confirm） -->
+  <div id="modal-confirm" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="modal-card modal-confirm-card">
+      <div class="modal-head"><h3 id="confirm-title">确认操作</h3><button class="modal-close" data-close="modal-confirm" aria-label="关闭确认">✕</button></div>
+      <p id="confirm-message" class="confirm-message"></p>
+      <div class="confirm-actions">
+        <button id="btn-confirm-cancel" class="ghost-btn">取消</button>
+        <button id="btn-confirm-ok" class="primary-btn">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 游戏内输入弹窗（替代浏览器原生 prompt） -->
+  <div id="modal-prompt" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="prompt-title">
+    <div class="modal-card modal-confirm-card">
+      <div class="modal-head"><h3 id="prompt-title">输入</h3><button class="modal-close" data-close="modal-prompt" aria-label="关闭输入">✕</button></div>
+      <p id="prompt-message" class="confirm-message"></p>
+      <input id="prompt-input" class="text-input" autocomplete="off">
+      <div class="confirm-actions">
+        <button id="btn-prompt-cancel" class="ghost-btn">取消</button>
+        <button id="btn-prompt-ok" class="primary-btn">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 小手动态点击指引（pointer-events:none，仅作视觉引导） -->
+  <div id="guide-hand" class="guide-hand hidden" aria-hidden="true">👇</div>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+
+  <script type="module" src="js/game.js?v=3.5.0"></script>
+</body>
+</html>

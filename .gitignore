@@ -1,0 +1,59 @@
+# 魔搭创空间部署配置
+ms_deploy.json
+
+# 本地私密环境变量与凭证
+.env
+.env.*
+*.env
+
+
+# 编辑器与工具缓存
+.zcode/
+.vscode/
+.idea/
+*.log
+
+# 录屏、视频文件
+*.mp4
+*.webm
+
+# 配音、音频素材
+*.wav
+*.mp3
+!assets/audio/intro-narration.mp3
+*.ogg
+*.srt
+配音分段/
+
+# 创作过程手记、文案与宣传物料（非游戏运行代码）
+口播稿.md
+雨夜画廊-创作手记/
+雨夜画廊游戏展示/
+Production Web Game Spec.md
+UX & Art Style Guidelines.md
+CHANGELOG.md
+
+# 本地监控与访问日志
+tools/visit-log.csv
+tools/visit-monitor.js
+
+# 系统文件
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# 本地测试依赖(playwright-core,仅 tools/*.mjs 用)
+node_modules/
+package-lock.json
+
+# 大模型测试虚拟环境（fastapi/uvicorn/httpx，仅 tools/_api_server.py 用）
+.venv-test/
+
+# Python 缓存（tools/_api_server.py 运行 app.py 时产生）
+__pycache__/
+*.pyc
+
+# 测试/调试临时产物
+tools/_*.txt
+tools/_*.json
+tools/_*.log

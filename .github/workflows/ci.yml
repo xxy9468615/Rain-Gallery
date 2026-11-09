@@ -1,0 +1,117 @@
+name: CI
+
+# 提交前在 CI 侧复现 pre-commit 的全部校验，并追加真实大模型契约测试。
+# 与本地 pre-commit 的差异：CI 一定能拿到 Python 依赖与后端服务，
+# 因此契约测试是「阻断级」，而不是本地那种「失败仅警告」。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 同一分支的重复推送只保留最新一次，避免额度浪费
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: 静态校验（语法 / 引用 / 注释配对）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # 本仓库无 package-lock.json（测试依赖用 --no-save），不能开 npm 缓存
+          cache: ''
+
+      - name: 安装测试依赖（仅 tools/*.mjs 用）
+        run: npm install --no-save --no-audit --no-fund playwright-core
+
+      - name: 运行静态校验
+        run: node tools/check-syntax.mjs
+
+      - name: 校验 pre-commit 钩子内容有效
+        run: |
+          test -f tools/hooks/pre-commit
+          # Windows 上不保留可执行位，这里用 sh 显式执行校验语法
+          sh -n tools/hooks/pre-commit
+          grep -q 'check-syntax.mjs' tools/hooks/pre-commit
+
+  contract:
+    name: 大模型契约测试（真实后端 + 上游）
+    runs-on: ubuntu-latest
+    needs: static
+    # 契约测试会真实调用上游模型，需要凭证；fork PR 拿不到 secret，跳过即可
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 安装 Node 测试依赖
+        run: npm install --no-save --no-audit --no-fund playwright-core
+
+      - name: 安装 Python 后端依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-test.txt
+
+      - name: 启动后端（复用 app.py 的 FastAPI app）
+        env:
+          RG_PROXY_TOKEN: ${{ secrets.RG_PROXY_TOKEN }}
+          RG_PROXY_API_BASE: ${{ secrets.RG_PROXY_API_BASE }}
+          RG_PROXY_MODEL: ${{ secrets.RG_PROXY_MODEL }}
+          RG_DAILY_CAP: ${{ secrets.RG_DAILY_CAP || '20000' }}
+        run: |
+          nohup python tools/_api_server.py --port 8092 > /tmp/api.log 2>&1 &
+          echo $! > /tmp/api.pid
+          for i in $(seq 1 30); do
+            if curl -fsS -m 2 http://127.0.0.1:8092/api/status > /dev/null 2>&1; then
+              echo "backend ready"; exit 0
+            fi
+            sleep 1
+          done
+          echo "backend failed to start"; tail -20 /tmp/api.log; exit 1
+
+      - name: 运行通道预检
+        env:
+          RG_PROXY_TOKEN: ${{ secrets.RG_PROXY_TOKEN }}
+          RG_PROXY_API_BASE: ${{ secrets.RG_PROXY_API_BASE }}
+          RG_PROXY_MODEL: ${{ secrets.RG_PROXY_MODEL }}
+        run: |
+          if [ -z "${RG_PROXY_TOKEN:-}" ] || [ -z "${RG_PROXY_MODEL:-}" ]; then
+            echo "⚠ 未配置上游凭证 secret，跳过预检与契约测试"
+            echo "  配置方式：仓库 Settings → Secrets and variables → Actions"
+            exit 0
+          fi
+          node tools/precheck.mjs --base http://127.0.0.1:8092
+
+      - name: 运行 API 契约测试
+        env:
+          RG_PROXY_TOKEN: ${{ secrets.RG_PROXY_TOKEN }}
+          RG_PROXY_API_BASE: ${{ secrets.RG_PROXY_API_BASE }}
+          RG_PROXY_MODEL: ${{ secrets.RG_PROXY_MODEL }}
+        run: |
+          if [ -z "${RG_PROXY_TOKEN:-}" ] || [ -z "${RG_PROXY_MODEL:-}" ]; then
+            echo "⚠ 未配置上游凭证 secret，跳过契约测试"
+            exit 0
+          fi
+          node tools/contract-test.mjs --base http://127.0.0.1:8092
+
+      - name: 上传后端日志（失败时排查）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-log
+          path: /tmp/api.log
+          retention-days: 7

@@ -1,0 +1,5 @@
+# 仅用于 CI / 本地跑大模型契约测试的后端依赖（不含 gradio）
+# 运行时（创空间部署）请使用 requirements.txt
+fastapi>=0.110
+uvicorn>=0.29
+httpx>=0.27

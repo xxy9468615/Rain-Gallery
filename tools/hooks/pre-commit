@@ -1,0 +1,69 @@
+#!/bin/sh
+# ============================================================
+# 提交前静态校验（pre-commit）
+# ------------------------------------------------------------
+# 由 core.hooksPath 指向本目录生效：
+#   git config core.hooksPath tools/hooks
+#
+# 校验内容（tools/check-syntax.mjs）：
+#   1. 全模块 ES Module 语法
+#   2. 跨模块 import 引用（防运行期 ReferenceError）
+#   3. 块注释配对（防 JSDoc 漏闭合把函数注释掉）
+#
+# 临时跳过：git commit --no-verify
+# ============================================================
+
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+[ -n "$REPO_ROOT" ] && cd "$REPO_ROOT" || exit 0
+
+# node 不可用时只警告不阻止，避免环境问题锁死提交流程
+if ! command -v node >/dev/null 2>&1; then
+  echo "[pre-commit] ⚠ 未找到 node，跳过语法校验"
+  exit 0
+fi
+
+echo "[pre-commit] 运行静态校验 tools/check-syntax.mjs …"
+if ! node tools/check-syntax.mjs; then
+  echo ""
+  echo "[pre-commit] ✗ 校验未通过，已阻止本次提交。"
+  echo "             修复后重新 git add && git commit。"
+  echo "             确认无误需强制提交：git commit --no-verify"
+  exit 1
+fi
+
+# ---- 大模型模拟生产测试（可选，失败不阻断提交） ----
+# 需要：后端已启动（默认 127.0.0.1:8092）+ .env 配置 + 本机 Chrome。
+# 未满足条件时只提示，避免本地无服务时阻塞提交。
+if [ -f ".env" ]; then
+  if curl -fsS -m 3 http://127.0.0.1:8092/api/status >/dev/null 2>&1; then
+    echo "[pre-commit] 运行大模型契约测试 tools/contract-test.mjs …"
+    if node tools/contract-test.mjs; then
+      echo "[pre-commit] ✓ 契约测试通过"
+    else
+      echo "[pre-commit] ⚠ 契约测试未通过（免费通道/上游异常，不阻断本次提交）"
+    fi
+  else
+    echo "[pre-commit] ⚠ 后端未启动（127.0.0.1:8092），跳过契约测试"
+    echo "             启动命令：.venv-test/Scripts/python.exe tools/_api_server.py"
+  fi
+else
+  echo "[pre-commit] ⚠ 无 .env，跳过大模型测试"
+fi
+
+# 提示：主目录改了前端文件但展示快照未同步
+if git diff --cached --name-only | grep -qE '^(index\.html|css/|js/|assets/)' ; then
+  unsynced=0
+  for f in index.html css/style.css js/game.js js/suspect-ai.js js/ai-client.js \
+           js/audio.js js/case-data.js js/profiler.js js/storage.js; do
+    if [ -f "$f" ] && [ -f "雨夜画廊游戏展示/$f" ] && ! diff -q "$f" "雨夜画廊游戏展示/$f" >/dev/null 2>&1; then
+      unsynced=1
+      break
+    fi
+  done
+  if [ "$unsynced" = "1" ]; then
+    echo "[pre-commit] ⚠ 雨夜画廊游戏展示/ 与主目录不一致（不影响本次提交）"
+    echo "             同步命令：cp index.html 雨夜画廊游戏展示/ && cp -r css js assets 雨夜画廊游戏展示/"
+  fi
+fi
+
+exit 0
