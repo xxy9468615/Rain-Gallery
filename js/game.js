@@ -18,7 +18,7 @@ import {
 } from './ai-client.js?v=3.6.0';
 import {
   suspectState, stageOf, askSuspect, presentToSuspect,
-  greetingOf, juryVerdict, setActionContext, getDecisionLog, applyRel,
+  greetingOf, juryVerdict, setActionContext, getDecisionLog, applyRel, replaceDecisionLog,
 } from './suspect-ai.js?v=3.6.0';
 import {
   buildProfile, aiProfileReport, radarSVG,
@@ -112,6 +112,8 @@ function resetGameState() {
   state.found = [];
   state.lostEvidence = [];
   state.dramasSeen = [];
+  // v3.7 · 新开局必须清空上局决策日志，否则终幕摘要会混进旧局的记录
+  replaceDecisionLog([]);
   state.suspects.clear();
   CASE.suspects.forEach((s) => state.suspects.set(s.id, suspectState(s.id)));
   state.crackCount = 0;
@@ -160,6 +162,8 @@ function save() {
     finished: state.finished,
     stats: state.stats || null,
     evaluation: state.evaluation || null,
+    // v3.7 · NPC 决策日志持久化（原为模块级数组，刷新即丢→续玩档摘要变空）
+    decisionLog: getDecisionLog(),
     volunteerNoted: !!state.volunteerNoted,
     sessionId: undefined, // 每次会话独立，不落盘
   };
@@ -182,6 +186,10 @@ function load() {
       volunteerNoted: !!d.volunteerNoted,
     });
     state.resumePhase = d.phase || 'intro'; // 存档 phase 快照（封面展示会改写 state.phase，续玩以快照为准）
+    // v3.7 · 恢复 NPC 决策日志（原为模块级数组，刷新即丢——
+    // 续玩已结案存档时终幕的决策日志摘要会是空的）。
+    // 注意:保存时省略了 key 就不过河拆桥；清档后 load 不会进来。
+    replaceDecisionLog(Array.isArray(d.decisionLog) ? d.decisionLog : []);
     if (d.suspects) {
       Object.entries(d.suspects).forEach(([id, st]) => {
         if (state.suspects.has(id)) {
@@ -2268,7 +2276,8 @@ function decisionLogDigest() {
   if (!log.length) return null;
   const lines = log.slice(-12).map((e) => {
     const tag = {
-      rel_event: '· 关系事件', judge: '· AI裁判', hand_over_photo: '· ✅交出照片',
+      rel_event: '· 关系事件', judge: '· AI裁判', keyword_hit: '· 🎯规则层命中',
+      hand_over_photo: '· ✅交出照片',
       delete_photo: '· 💥删除照片', call_lawyer: '· ⚖️叫律师', volunteer_info: '· 🤝主动交代',
       shift_blame: '· 🎯祸水东引', request_storage: '· 🚪请求去储物间',
     }[e.action] || `· ${e.action}`;

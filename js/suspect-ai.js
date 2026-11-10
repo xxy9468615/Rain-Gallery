@@ -92,6 +92,24 @@ function logDecision(st, entry) {
   if (decisionLog.length > 400) decisionLog.splice(0, decisionLog.length - 400);
 }
 
+/**
+ * v3.7 · 决策日志存档/恢复。
+ * 原为纯模块级数组，刷新即丢——续玩一个已结案的存档时，
+ * 终幕的「NPC 决策日志」摘要会是空的（明明那晚审过三个人）。
+ * 存档只保留时间戳之后的字段，time 在 load 时重置为读取时刻
+ * （原时刻对玩家无意义，只会让面板里的排序错乱）。
+ */
+export function replaceDecisionLog(list) {
+  decisionLog.length = 0;
+  if (Array.isArray(list)) {
+    for (const raw of list.slice(-400)) {
+      if (!raw || typeof raw !== 'object') continue;
+      decisionLog.push({ ...raw, time: Date.now() });
+    }
+  }
+  return decisionLog;
+}
+
 /* ---------------- 本地压力检测（规则层，独立于 AI） ---------------- */
 
 /** 已收集物证（由 askSuspect 调用方传入 foundIds；裁判候选过滤用） */
@@ -275,6 +293,14 @@ export async function askSuspect(s, st, question, knownEvidences, ctx = {}) {
     st.pressure += h.crack;
     cracked = true;
     preHint = `（侦探刚刚的话命中了你的痛处——你已被点破这一点，回答时按规则3松动口风）`;
+    // 规则层命中也必须留痕。此前只记 rel_event / judge / 行动校验三类，
+    // 结果最常见的事件（关键词命中→压力上升）反而不进日志——
+    // 终幕的「NPC 决策日志」摘要几乎总是空的，玩家看不到自己哪句话戳破了什么。
+    logDecision(st, {
+      action: 'keyword_hit', ok: true,
+      note: `规则层命中 ${h.tag}：${h.point || '（未标注破绽要点）'}，压力 +${h.crack}`,
+      after: `压力→${st.pressure}`,
+    });
   }
 
   if (!aiModeUsable()) throw aiUnavailable();
