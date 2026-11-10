@@ -12,6 +12,9 @@
  *   4. 保存流程顺序：validateProxyBase 必须早于全部 setter（先校验后落盘）
  *   5. DOM 位置：基址输入必须在 #custom-key-block 之外（免费模式不被 dim 禁用）
  *   6. CORS fail-closed：app.py 不得把空白名单回落成 ["*"]
+ *   7. v3.7 · 求助系统不可一键通关（合规闸 + 计分惩罚 + 落盘字段）
+ *   8. v3.7 · 模型 ID 配置链 + 流式思维链剥离（见上方 getModel/modelOptions/stripThinking 断言）
+ *   9. v3.7 · 终幕契约：评估不自动跑、computeScore 可存档重算、行为快照带关系数值
  *
  * 用法：node tools/proxy-base-test.mjs
  * ============================================================ */
@@ -291,6 +294,92 @@ section('8 · 模型 ID 配置链与流式思维链剥离');
   rotateSessionId();
   t(proxyState.sessionUsed === 0, 'rotateSessionId() 归零本局计数', `实际 ${proxyState.sessionUsed}`);
   aiSettings.setModel(saved);   // 还原，避免污染后续模块读默认值
+}
+
+/* ============================================================
+ * 9. 求助系统：不给一键通关，扣分可存档重算
+ * ============================================================ */
+section('9 · 求助系统（方向性提示 + 计分惩罚）');
+{
+  const { hintPenalty, hintsLeft, HINT_LIMIT, sanitizeHint } = await import('../js/hint.js?v=3.6.0');
+
+  // 9.1 扣分曲线：每次 -2、封顶 -6，脏数据归零不返负
+  const penCases = [[0, 0], [1, 2], [2, 4], [3, 6], [4, 6], [-1, 0], [undefined, 0], ['2', 4]];
+  let penOk = true; const penDetail = [];
+  for (const [n, want] of penCases) {
+    const got = hintPenalty(n);
+    if (got !== want) { penOk = false; penDetail.push(`${n}→${got}(期望${want})`); }
+  }
+  t(penOk, 'hintPenalty 曲线（每次-2/封顶-6/脏数据归零）', penDetail.join(' · '));
+
+  // 9.2 次数上限：一局 3 次，越界归零不返负
+  t(HINT_LIMIT === 3, '一局 3 次求助');
+  t(hintsLeft(0) === 3 && hintsLeft(3) === 0 && hintsLeft(9) === 0, '剩余次数不返负');
+
+  // 9.3 合规闸：方向性提示放行，代写问句/物证名/结论/引号复述/paraphrase 一律拦
+  const { CASE } = await import('../js/case-data.js?v=3.6.0');
+  const sus = CASE.suspects.find((s) => s.id === 'chenmo');
+  const known = CASE.evidences.slice(0, 2);
+  const badHints = [
+    ['你能告诉我画框夹层里的信是谁留下的吗？', '代写可照抄问句'],
+    ['那把沾着钴蓝颜料的 CZ-07 裁纸刀就是关键。', 'paraphrase 点名物证（子串匹配失效）'],
+    ['关于' + known[0].name + '，你再想想。', '物证原名'],
+    ['真凶就是陈默。', '直接给结论'],
+    ['他说「我八点半才到馆里」时眼神躲闪。', '全角引号复述原话'],
+    ['试试把"痕迹"和"物品"连起来问。', '半角引号复述（实测出现过）'],
+    ['x'.repeat(200), '超长'],
+    ['', '空串'],
+  ];
+  let gateOk = true; const gateDetail = [];
+  for (const [bad, why] of badHints) {
+    if (sanitizeHint(bad, sus, known) !== null) { gateOk = false; gateDetail.push(why); }
+  }
+  t(gateOk, '合规闸拦下全部违规提示（不许一键通关）', gateDetail.join(' · '));
+  t(sanitizeHint('他谈到母亲时语速变了。', sus, known) === '他谈到母亲时语速变了。', '方向性提示正常放行');
+}
+
+/* ============================================================
+ * 10. 终幕契约：评估不自动跑 + 评分可重算 + 快照带关系数值
+ * ============================================================ */
+section('10 · 终幕契约（动感计分 / 主动评估 / 快照补全）');
+{
+  const gameSrc = read('js/game.js');
+  const profSrc = read('js/profiler.js');
+
+  // 10.1 runFinal 不得自动渲染评估报告——必须走 CTA
+  t(!/renderEvaluationReport\(sc\);\s*\n\s*state\.finished/.test(gameSrc),
+    'runFinal 不自动调用 renderEvaluationReport（改为 renderCapabilityCTA）');
+  t(/renderCapabilityCTA\(sc\)/.test(gameSrc), 'runFinal 渲染能力评估 CTA');
+  t(/id="btn-capability"[\s\S]{0,200}renderEvaluationReport\(sc\)/.test(gameSrc),
+    'CTA 按钮点击后才调 renderEvaluationReport');
+
+  // 10.2 resumeGamePhase 的 final 分支也不得自动跑（续玩未生成的应显示 CTA）
+  t(!/state\.evaluation\s*&&\s*state\.evaluation\.profile[\s\S]{0,160}renderEvaluationReport\(sc\)/.test(gameSrc),
+    'resumeGamePhase final 分支不自动生成评估');
+
+  // 10.3 computeScore 纯函数：只读落盘字段（hintsUsed 会进存档）
+  t(/const hints = \(state\.stats && state\.stats\.hintsUsed\) \|\| 0;/.test(gameSrc)
+    && /hintPenalty\(hints\)/.test(gameSrc), 'computeScore 从 state.stats.hintsUsed 算惩罚（可存档重算）');
+
+  // 10.4 动感计分组件在位
+  t(/requestAnimationFrame/.test(gameSrc) && /function animateScoreRow/.test(gameSrc)
+    && /function animateTotal/.test(gameSrc), '动感计分三件套（rAF / 单行 / 总分）');
+
+  // 10.5 行为快照补全：信任/敌意/阶段/丢失物证
+  // 注意必须把正则限定在 buildBehaviorSnapshot 函数体内——
+  // 直接在全文件搜 `trust: st.trust` 会被别处（关系条/陪审团 digest）命中，
+  // 快照自己那份被删掉也查不出来（变异测试实测踩过）。
+  const snapFn = (() => {
+    const m = gameSrc.match(/function buildBehaviorSnapshot\(\)[\s\S]*?\n\}/);
+    return m ? m[0] : '';
+  })();
+  t(snapFn.length > 0
+    && /trust: st\.trust/.test(snapFn) && /hostility: st\.hostility/.test(snapFn)
+    && /stage: stageOf\(st\)/.test(snapFn) && /lostEvidence: state\.lostEvidence/.test(snapFn),
+    'buildBehaviorSnapshot 函数体内含 trust/hostility/stage/lostEvidence',
+    snapFn ? '' : '未定位到 buildBehaviorSnapshot');
+  t(/关系走向（终局）/.test(profSrc) && /被销毁丢失/.test(profSrc),
+    'buildStatsDigest 输出关系走向与被销毁物证行');
 }
 
 /* ============================================================
