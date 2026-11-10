@@ -562,7 +562,10 @@ button { font-family: var(--sans); }
  * （scale 心跳），两个动画都写 transform 会互相覆盖（CodeRabbit 抓到），
  * 独立属性让两者并行不冲突。 */
 .avatar-dialog.mood-broken {
-  animation: headShake 4s ease-in-out infinite;
+  /* 本规则比 .tension-heartbeat 高一级，animation 简写会整条覆盖心跳；
+   * 崩溃态的头像一定同时带 tension-heartbeat（见 game.js 头像类名拼装），
+   * 因此把两个动画合并到同一条声明里，rotate/scale 各管各的互不冲突。 */
+  animation: headShake 4s ease-in-out infinite, tensionPulse 1.2s infinite ease-in-out;
 }
 @keyframes headShake {
   0%, 100% { rotate: 0deg; }

@@ -1690,15 +1690,17 @@ async function onHintRequest() {
   try {
     out = await requestHint(s, st, known, used);
   } catch (e) {
-    out = { text: fallbackHint(), source: 'fallback', left: hintsLeft(used) - 1 };
+    out = { text: fallbackHint(), source: 'fallback', left: hintsLeft(used) };
   } finally {
     hintBusy = false;
   }
   // 等待期间玩家切去了别的审讯室：这条旁白不能落进别人的对话流，
   // 决策日志也不能记在别人头上——只落回发起时那位（CodeRabbit 抓到）
   if (state.activeSuspect !== sid) {
-    toast(`（旁白看完了对 ${s.name} 的观察——切回来时再问一次吧）`);
-    save();   // hintsUsed 已扣，仍要落盘
+    // 旁白未送达，退回本次额度——否则玩家切回来再问一次要白花一次求助
+    stats.hintsUsed = Math.max(0, stats.hintsUsed - 1);
+    toast('（旁白没能送达——已退回这次求助额度）');
+    save();
     return;
   }
   appendHintBubble(out, used);

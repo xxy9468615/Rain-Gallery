@@ -296,7 +296,10 @@ async def api_judge(request: Request):
 # 布局：/        → Gradio 入口页（作品介绍 + 开始游戏按钮）
 #       /game/   → 游戏本体（静态托管，index.html 在此）
 #       /api/*   → 免费 AI 代理（/api/chat /api/judge /api/status）
-import gradio as gr  # noqa: E402（延迟导入：本地静态模式无 gradio 也能跑）
+try:
+    import gradio as gr  # noqa: E402（本地静态模式可无 gradio：仅 /game/ + /api/*）
+except ImportError:  # dev-server.sh 的探测只要求 fastapi/uvicorn/httpx
+    gr = None
 
 
 def _build_demo():
@@ -333,13 +336,19 @@ def _build_demo():
     return demo
 
 
-demo = _build_demo()
+demo = _build_demo() if gr is not None else None
 
 # 游戏挂在 /game/（Gradio 占根路径；/api/* 已在 Gradio 挂载前注册，保持可用）
 app.mount("/game", StaticFiles(directory=BASE_DIR, html=True), name="game")
 
-# 统一入口：Gradio 提供根路径 UI + 文档 + 静态资源，原 FastAPI 应用作为宿主
-_root = gr.mount_gradio_app(app, demo, path="/", favicon_path=os.path.join(BASE_DIR, "assets", "favicon.svg"))
+if gr is not None:
+    # 统一入口：Gradio 提供根路径 UI + 文档 + 静态资源，原 FastAPI 应用作为宿主
+    _root = gr.mount_gradio_app(app, demo, path="/", favicon_path=os.path.join(BASE_DIR, "assets", "favicon.svg"))
+else:
+    # 未装 gradio（如 dev-server.sh 探测通过的 .venv-test）：跳过入口页，
+    # 仅提供 /game/ 静态站点与 /api/* 代理，与 dev-server.sh 的探测契约一致
+    print("ℹ 未安装 gradio：跳过入口页，仅提供 /game/ 与 /api/*（本地静态模式）", flush=True)
+    _root = app
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "7860"))

@@ -601,7 +601,7 @@ export function validateTokenFormat(token) {
  * 末尾若有未闭合的 `<…` 暂扣不发（标签可能被拆在 chunk 边界），
  * 等下一 chunk 到齐或流结束时再放行。
  */
-function createStreamSanitizer() {
+export function createStreamSanitizer() {
   let raw = '';        // 累积原文
   let cleanLen = 0;     // 已确认输出的干净前缀长度
   return {
@@ -1065,6 +1065,9 @@ export async function chatCompletionStream(messages, opts = {}) {
   }
   const tail = sanitizer.flush();
   if (tail) { full += tail; opts.onDelta && opts.onDelta(tail, full); }
+  // 与免费通道一致：正文被思维链占满 / content 为空时抛 EMPTY，
+  // 让 askSuspect 走既有非流式兜底，而不是把空串写进历史渲染空气泡
+  if (!full) throw { code: 'EMPTY', message: '模型流式返回为空' };
   return full;
 }
 

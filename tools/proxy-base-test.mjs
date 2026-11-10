@@ -398,6 +398,7 @@ section('11 · 第二轮评审修复回归');
   const appSrc = read('app.py');
   const gitattr = read('.gitattributes');
   const devSrc = read('tools/dev-server.sh');
+  const { createStreamSanitizer } = await import('../js/ai-client.js?v=3.6.0');
 
   // 11.1（Major）流式思维链：跨 chunk 有状态剥离，两处分支都接 sanitizer
   t(/function createStreamSanitizer\(\)/.test(aiSrc), '流式剥离改为跨 chunk 有状态');
@@ -405,6 +406,27 @@ section('11 · 第二轮评审修复回归');
   t((aiSrc.match(/sanitizer\.flush\(\)/g) || []).length === 2, '两处都有 flush 收尾');
   t(!/typeof delta\.content === 'string'\) return stripThinking/.test(aiSrc),
     'sseDeltaPiece 不再逐 chunk 调 stripThinking');
+  t((aiSrc.match(/if \(!full\) throw \{ code: 'EMPTY'/g) || []).length === 2,
+    '两处流式分支都做 EMPTY 判空（空响应走非流式兜底）');
+
+  // 11.1b（第三轮）行为用例：真跑 sanitizer，验证跨 chunk 拼接而不只查源码结构
+  {
+    const run = (chunks) => {
+      const s = createStreamSanitizer();
+      let out = '';
+      for (const c of chunks) out += s.push(c);
+      return out + s.flush();
+    };
+    const splitThink = run(['<thi', 'nk>想', '很久</th', 'ink>你好']);
+    t(splitThink === '你好', 'sanitizer 跨 chunk 剥离被拆开的思维链',
+      `实际 ${JSON.stringify(splitThink)}`);
+    const spaced = run(['Hello', ' world']);
+    t(spaced === 'Hello world', 'sanitizer 跨 chunk 保留英文空格',
+      `实际 ${JSON.stringify(spaced)}`);
+    const dangling = run(['你好<']);
+    t(dangling === '你好<', 'flush 放行末尾未闭合的 <',
+      `实际 ${JSON.stringify(dangling)}`);
+  }
 
   // 11.2 CORS 暴露 Retry-After + 注释与配置一致
   t(/expose_headers=\["Retry-After"\]/.test(appSrc), 'CORS expose_headers 含 Retry-After');
@@ -413,6 +435,8 @@ section('11 · 第二轮评审修复回归');
   // 11.3 崩溃摇头 + 心跳不再互相覆盖（rotate/scale 独立属性）
   t(/@keyframes headShake[\s\S]{0,80}rotate:/.test(cssSrc), 'headShake 改用 rotate 属性');
   t(/@keyframes tensionPulse[\s\S]{0,60}scale:/.test(cssSrc), 'tensionPulse 改用 scale 属性');
+  t(/\.avatar-dialog\.mood-broken\s*\{[^}]*animation:[^;]*tensionPulse/.test(cssSrc),
+    '崩溃态摇头与心跳合并播放（不被 animation 简写覆盖）');
 
   // 11.4 评级徽章不被 ID 选择器 display 覆盖 hidden
   t(!/#score-rank-badge\s*\{[^}]*display:/.test(cssSrc), '徽章无 display 覆盖（hidden 生效）');
@@ -421,6 +445,9 @@ section('11 · 第二轮评审修复回归');
   t(/let hintBusy = false/.test(gameSrc) && /if \(hintBusy\) return/.test(gameSrc), '求助并发守卫');
   t(/state\.activeSuspect !== sid/.test(gameSrc), '求助回来校验嫌疑人未切换');
   t(/const stats = ensureStats\(\);\s*\n\s*stats\.hintsUsed \+= 1/.test(gameSrc), '求助先 ensureStats（防 NaN）');
+  t(/left: hintsLeft\(used\) \}/.test(gameSrc), '兜底旁白 left 与 requestHint 契约一致');
+  t(/stats\.hintsUsed = Math\.max\(0, stats\.hintsUsed - 1\)/.test(gameSrc),
+    '切走时未送达旁白退回求助额度');
 
   // 11.6 出示物证后刷新对峙条 + 头像态统一 avatarMood
   t(/renderEvidenceBar\(\);\s*\n\s*renderSuggestQuestions\(\);\s*\n\s*save\(\);/.test(gameSrc),
@@ -461,15 +488,18 @@ section('11 · 第二轮评审修复回归');
 
   // 11.15 dev-server 探活三件套
   t(/import fastapi, uvicorn, httpx/.test(devSrc), 'dev-server 探活 fastapi+uvicorn+httpx');
+  t(/try:\s*\n\s*import gradio as gr[\s\S]{0,120}except ImportError/.test(appSrc),
+    'app.py gradio 导入可缺省（与 dev-server 探测一致）');
+  t(/gr is not None[\s\S]{0,400}_root = app/.test(appSrc), '无 gradio 时回退 FastAPI 宿主');
   t(!/没有装 fastapi 的解释器也允许启动/.test(devSrc), '删除误导的回退注释');
 
   // 11.16 proxy-base-test 自身 first() 偏移
   t(!/m\.index \+ body\.slice\(0, m\.index\)\.length/.test(read('tools/proxy-base-test.mjs')),
     'first() 偏移不再算成 2*m.index');
 
-  // 11.17 README 断言数与实际一致（74）
-  t(!/proxy-base-test 61 断言/.test(read('README.md')), 'README 断言数已更新');
-  t(/proxy-base-test 74 断言/.test(read('README.md')), 'README 记录 74 断言');
+  // 11.17 README 断言数与实际一致（114）
+  t(!/proxy-base-test (?:61|74) 断言/.test(read('README.md')), 'README 断言数已更新');
+  t(/proxy-base-test 114 断言/.test(read('README.md')), 'README 记录 114 断言');
 
   // 11.18 .gitattributes 注释不再说"按平台还原"
   t(!/检出时按平台还原/.test(gitattr), '.gitattributes 注释已纠正');
