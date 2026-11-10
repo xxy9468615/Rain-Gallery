@@ -189,6 +189,9 @@ export const MODEL_OPTIONS = [
   { id: 'deepseek-ai/DeepSeek-V4.1-Flash-1017', label: 'DeepSeek-V4.1-Flash' },
   { id: 'ZhipuAI/GLM-4.7-Flash', label: 'GLM-4.7-Flash' },
   { id: 'MiniMax/MiniMax-M1-80k', label: 'MiniMax-M1-80k' },
+  // 讯飞星火：app.py 的默认上游之一是它，实测思维链较长、
+  // 台词语 JSON 需给足 max_tokens（JUDGE_MAX_TOKENS=400 才够）。
+  { id: 'spark-x2.6', label: '讯飞星火 spark-x2.6（当前免费通道在用）' },
 ];
 
 export const STORAGE_MODE = {
@@ -416,13 +419,19 @@ export const aiSettings = {
     storage.removeItem('rain-gallery-token');
   },
 
+  /**
+   * 读取当前模型 ID。语义：存什么读什么。
+   * 白名单 MODEL_OPTIONS 只决定「首次进入的默认值」，不作为过滤条件——
+   * 过去这里要求 memoryModel / saved 必须在白名单内或以 'custom:' 开头，
+   * 导致玩家在设置里手填的模型 ID（如 glm-4-plus）每次都被静默重置回默认值：
+   * 玩家以为换了模型，实际请求一直在打默认模型。
+   * obsolete 列表仍生效（已从上游下线的旧 ID 重置为默认）。
+   */
   getModel() {
-    if (memoryModel && (MODEL_OPTIONS.some(m => m.id === memoryModel) || memoryModel.startsWith('custom:'))) {
-      return memoryModel;
-    }
+    if (memoryModel) return memoryModel;
     const saved = storage.getItem(LS_MODEL);
     const obsolete = ['Qwen/Qwen3-8b', 'Qwen/Qwen2.5-7B-Instruct', 'deepseek-ai/DeepSeek-V3.1', 'ZhipuAI/GLM-4-9B-0414-Flash'];
-    if (!saved || obsolete.includes(saved) || (!MODEL_OPTIONS.some(m => m.id === saved) && !saved.startsWith('custom:'))) {
+    if (!saved || obsolete.includes(saved)) {
       storage.setItem(LS_MODEL, MODEL_OPTIONS[0].id);
       return MODEL_OPTIONS[0].id;
     }
@@ -430,8 +439,10 @@ export const aiSettings = {
   },
 
   setModel(m) {
-    memoryModel = m || '';
-    storage.setItem(LS_MODEL, m);
+    const clean = String(m || '').trim();
+    memoryModel = clean;
+    storage.setItem(LS_MODEL, clean);
+    return clean;
   },
 
   hasToken() {
@@ -477,6 +488,9 @@ export function getSessionId() {
 
 export function rotateSessionId() {
   storage.removeItem(LS_SESSION_ID);
+  // 换新会话的同时把本局计数归零：否则「本局剩余 N 次」会沿用上一局的消耗，
+  // 玩家看到的是一个对不上的数字（后端已按新会话重新计额，前端却还在扣旧的）。
+  proxyState.sessionUsed = 0;
   return getSessionId();
 }
 
@@ -548,17 +562,51 @@ export function lastTransport() { return { ..._lastTransport }; }
 // ------------------------------------------------------------
 // 4. 网络出站单向沙箱守卫与调用
 // ------------------------------------------------------------
-/** 剥离推理模型返回的 <think>...</think> 段落 */
+/**
+ * 剥离推理模型返回的思维链段落。玩家看到的是「台词」，不是模型的内心独白。
+ * 覆盖四种形态，任一漏掉都会把推理原文怼到玩家脸上：
+ *   1. 闭合 <think> ... </think>：整段删除（非贪婪，遇首个闭合标签即停）
+ *   2. 未闭合 <think>：模型被 max_tokens 截断时只剩开标签，其后全是残留，切到结尾
+ *   3. <|begin_of_thought|> ... <|end_of_thought|>：整段删除（早期实现只删标记不删内容）
+ *   4. 落单的起止标记：兜底把标记字符本身删掉
+ */
 export function stripThinking(text) {
-  return String(text || '')
+  const raw = String(text || '');
+  if (!raw) return '';
+  return raw
     .replace(/<think>[\s\S]*?<\/think>/gi, '')
-    .replace(/<\|?(?:begin|end)_of_thought\|?>/gi, '')
+    .replace(/<think>[\s\S]*$/gi, '')
+    .replace(/<\|begin_of_thought\|>[\s\S]*?(?:<\|end_of_thought\|>|$)/gi, '')
+    .replace(/<\|?(?:begin|end)_of_thought\|>/gi, '')
     .trim();
 }
 
 /** 魔搭访问令牌格式校验（ms- 前缀，主体 ≥12 位） */
 export function validateTokenFormat(token) {
   return /^ms-[A-Za-z0-9_-]{12,}$/.test(String(token || '').trim());
+}
+
+/**
+ * 从一条 SSE chunk 里取出本段正文（已剥思维链）。
+ * ------------------------------------------------------------
+ * 两处流式分支（free 通道 / custom 通道）都要用，行为必须一致，
+ * 否则同一个模型在两个通道下一个泄漏思维链另一个不泄漏。
+ *
+ * 三种上游形态都覆盖：
+ *   - delta.content             绝大多数 OpenAI 兼容上游
+ *   - delta.message.content     合帧场景（上游把整条 message 塞进 delta）
+ *   - 思维链出现在 content 里   部分上游不区分 reasoning_content / content，
+ *                               直接混着吐 → 必须过 stripThinking
+ */
+function sseDeltaPiece(parsed) {
+  const delta = parsed && parsed.choices && parsed.choices[0] && parsed.choices[0].delta;
+  if (!delta) return '';
+  if (typeof delta.content === 'string') return stripThinking(delta.content);
+  if (typeof delta.message === 'object' && delta.message
+      && typeof delta.message.content === 'string') {
+    return stripThinking(delta.message.content);
+  }
+  return '';
 }
 
 // ------------------------------------------------------------
@@ -916,8 +964,7 @@ export async function chatCompletionStream(messages, opts = {}) {
         if (!dataStr || dataStr === '[DONE]') continue;
         try {
           const parsed = JSON.parse(dataStr);
-          const delta = parsed.choices && parsed.choices[0] && parsed.choices[0].delta;
-          const piece = delta && typeof delta.content === 'string' ? delta.content : '';
+          const piece = sseDeltaPiece(parsed);
           if (piece) { full += piece; opts.onDelta && opts.onDelta(piece, full); }
         } catch (e) { /* SSE keep-alive 行或非标准 chunk,忽略 */ }
       }
@@ -967,8 +1014,7 @@ export async function chatCompletionStream(messages, opts = {}) {
       if (!dataStr || dataStr === '[DONE]') continue;
       try {
         const parsed = JSON.parse(dataStr);
-        const delta = parsed.choices && parsed.choices[0] && parsed.choices[0].delta;
-        const piece = delta && typeof delta.content === 'string' ? delta.content : '';
+        const piece = sseDeltaPiece(parsed);
         if (piece) { full += piece; opts.onDelta && opts.onDelta(piece, full); }
       } catch (e) { /* ignore */ }
     }

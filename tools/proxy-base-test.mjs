@@ -231,6 +231,69 @@ print(_strip_quotes(sys.argv[1]))
 }
 
 /* ============================================================
+ * 8. 模型配置链（Phase 0：getModel 门槛 / MODEL_OPTIONS / 流式剥思维链 / 跨局计数）
+ * ============================================================ */
+section('8 · 模型 ID 配置链与流式思维链剥离');
+{
+  const { aiSettings, stripThinking, MODEL_OPTIONS, rotateSessionId, proxyState } =
+    await import('../js/ai-client.js?v=3.6.0');
+
+  // 8.1 setModel(x) → getModel() === x：任何非空 ID 都是合法模型
+  // 分两条腿测，缺一条就漏：
+  //   a) 同实例：memoryModel 命中（页面内切换模型）
+  //   b) 重新 import：memoryModel 为空，走 storage.getItem 的冷启动分支——
+  //      这才是原 bug 的所在（刷新页面/新开一局后自定义 ID 被白名单重置）。
+  //      Node 下 storage.js 降级为进程内 Map，所以必须重新 import 模块才能重置 memoryModel。
+  const saved = aiSettings.getModel();
+  let keepOk = true;
+  let coldOk = true;
+  const keepDetail = [];
+  const coldDetail = [];
+
+  for (const m of ['glm-4-plus', 'spark-x2.6', 'Qwen/Qwen3.5-27B', 'my/custom-model-9000']) {
+    aiSettings.setModel(m);
+    if (aiSettings.getModel() !== m) { keepOk = false; keepDetail.push(`${m} → ${aiSettings.getModel()}`); }
+
+    // 冷启动分支：换一个全新模块实例（相当于刷新页面）
+    const fresh = await import('../js/ai-client.js?v=3.6.0&cold=' + encodeURIComponent(m));
+    if (fresh.aiSettings.getModel() !== m) {
+      coldOk = false;
+      coldDetail.push(`${m} → ${fresh.aiSettings.getModel()}`);
+    }
+  }
+  t(keepOk, 'getModel() 同实例不过滤自定义模型 ID', keepDetail.join(' · '));
+  t(coldOk, 'getModel() 冷启动（刷新后）不过滤自定义模型 ID', coldDetail.join(' · '));
+  aiSettings.setModel(saved);   // 还原，避免污染后续模块读默认值
+
+  // 8.2 白名单里必须有免费通道在用的模型，否则下拉框选不到真实模型
+  t(MODEL_OPTIONS.some((m) => m.id === 'spark-x2.6'), 'MODEL_OPTIONS 含 spark-x2.6（免费通道在用）',
+    MODEL_OPTIONS.map((m) => m.id).join(' '));
+
+  // 8.3 思维链四种形态都不泄漏（含截断的未闭合标签）
+  const OPEN = '<' + 'think' + '>';
+  const CLOSE = '</' + 'think' + '>';
+  const B_OPEN = '<|begin_of_thought|>';
+  const B_CLOSE = '<|end_of_thought|>';
+  const stripCases = [
+    [OPEN + 'a' + CLOSE + 'b', 'b', '闭合 think 段'],
+    [B_OPEN + '思维链' + B_CLOSE + '正文', '正文', '闭合 begin_of_thought 段'],
+    [OPEN + '半句被 max_tokens 截断的思维链', '', '未闭合 think（截断残留）'],
+    [B_OPEN + '只有开头标记', '', '未闭合 begin_of_thought'],
+    ['（指节收紧）……我昨晚在家。', '（指节收紧）……我昨晚在家。', '普通台词不受影响'],
+  ];
+  for (const [input, want, why] of stripCases) {
+    const got = stripThinking(input);
+    t(got === want, `剥离思维链：${why}`, `got ${JSON.stringify(got)}`);
+  }
+
+  // 8.4 跨局计数归零：rotateSessionId 后「本局剩余 N 次」必须从 0 重新计
+  proxyState.sessionUsed = 7;
+  rotateSessionId();
+  t(proxyState.sessionUsed === 0, 'rotateSessionId() 归零本局计数', `实际 ${proxyState.sessionUsed}`);
+  aiSettings.setModel(saved);   // 还原，避免污染后续模块读默认值
+}
+
+/* ============================================================
  * 汇总
  * ============================================================ */
 console.log(`\n\x1b[1m合计\x1b[0m  \x1b[32m通过 ${pass}\x1b[0m · \x1b[31m失败 ${fail}\x1b[0m`);
@@ -239,4 +302,4 @@ if (fail) {
   failures.forEach((f) => console.log('  · ' + f));
   process.exit(1);
 }
-console.log('\x1b[32m✓ 代理基址 / CORS 修复回归全部通过\x1b[0m');
+console.log('\x1b[32m✓ 代理基址 / CORS / 模型配置链回归全部通过\x1b[0m');
