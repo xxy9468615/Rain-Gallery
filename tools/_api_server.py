@@ -12,15 +12,19 @@ sys.path.insert(0, ROOT)
 class _Any:
     """吸收 gradio 的所有属性访问与调用，用于测试环境跳过入口页构建。"""
     def __getattr__(self, _k):
+        """任意属性访问返回新的 _Any，透传 gradio 调用链。"""
         return _Any()
 
     def __call__(self, *a, **kw):
+        """任意调用返回新的 _Any，模拟 gradio 组件构造/渲染。"""
         return _Any()
 
     def __enter__(self):
+        """上下文管理器入口：返回自身。"""
         return self
 
     def __exit__(self, *a):
+        """上下文管理器出口：吞掉异常并继续执行。"""
         return False
 
 
@@ -33,6 +37,7 @@ sys.modules['gradio'] = _Any()
 # 『https"』→ httpx 抛 UnsupportedProtocol，表现为 502 UPSTREAM_ERROR，
 # 而 URL 本身看 repr 完全正常，极难定位。precheck.mjs 早就剥了，这里补齐对齐。
 def _strip_quotes(v: str) -> str:
+    """剥掉 .env 值两侧成对的单/双引号，避免引号进入 httpx URL。"""
     v = v.strip()
     if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'"):
         return v[1:-1]

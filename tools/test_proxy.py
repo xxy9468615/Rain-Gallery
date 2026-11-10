@@ -14,6 +14,7 @@ STATE = {'429': False}
 
 class MockUpstream(BaseHTTPRequestHandler):
     def do_POST(self):
+        """处理 mock 上游 POST：校验模型覆盖并返回固定或 429 响应。"""
         length = int(self.headers.get('Content-Length', '0') or 0)
         body = json.loads(self.rfile.read(length) or b'{}')
         # 校验 app.py 是否强制覆盖 model、剥离客户端 token
@@ -35,7 +36,8 @@ class MockUpstream(BaseHTTPRequestHandler):
         with open(os.path.join(os.path.dirname(__file__), '_upstream_ok.txt'), 'w') as f:
             f.write('model_ok' if ok_model else 'model_bad')
 
-    def log_message(self, *a): pass
+    def log_message(self, *a):
+        """静默 HTTPServer 访问日志，避免干扰测试输出。"""
 
 # urllib 会尊重 http_proxy/HTTP_PROXY 环境变量；本脚本靠的是本机 mock 上游与
 # 127.0.0.1 自托管端口，一旦开发机设了系统代理就会被劫走（表现为莫名 502）。
@@ -44,6 +46,7 @@ for _k in ('http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY'):
     os.environ.pop(_k, None)
 
 def call(method, path, headers=None, data=None):
+    """向本机测试服务发起 HTTP 请求，返回 (状态码, 响应文本)。"""
     req = urllib.request.Request(f'http://127.0.0.1:7905{path}', method=method,
                                  data=json.dumps(data).encode() if data else None)
     for k, v in (headers or {}).items():
@@ -71,18 +74,23 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 class _GradioStub:
     """吸收 gradio 的属性访问与调用,让 app.py 在无 gradio 环境也能导入。"""
     def __getattr__(self, _k):
+        """任意属性访问返回新的桩对象，透传 gradio 调用链。"""
         return _GradioStub()
 
     def __call__(self, *a, **kw):
+        """任意调用返回新的桩对象。"""
         return _GradioStub()
 
     def __enter__(self):
+        """上下文管理器入口：返回自身。"""
         return self
 
     def __exit__(self, *a):
+        """上下文管理器出口：不抑制异常。"""
         return False
 
     def mount_gradio_app(self, app, *a, **kw):
+        """桩实现：直接返回 FastAPI app，跳过 Gradio 入口页挂载。"""
         return app
 
 
@@ -99,6 +107,7 @@ time.sleep(3)
 
 results = []
 def check(name, cond, detail=''):
+    """记录并打印一条断言结果。"""
     results.append((name, cond, detail))
     print(('✓' if cond else '✗ FAIL'), name, detail if not cond else '')
 

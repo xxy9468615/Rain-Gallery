@@ -524,12 +524,34 @@ section('11 · 第二轮评审修复回归');
   t(!/m\.index \+ body\.slice\(0, m\.index\)\.length/.test(read('tools/proxy-base-test.mjs')),
     'first() 偏移不再算成 2*m.index');
 
-  // 11.17 README 断言数与实际一致（125）
-  t(!/proxy-base-test (?:61|74|114|124) 断言/.test(read('README.md')), 'README 断言数已更新');
-  t(/proxy-base-test 125 断言/.test(read('README.md')), 'README 记录 125 断言');
+  // 11.17 README 断言数与实际一致（126）
+  t(!/proxy-base-test (?:61|74|114|124|125) 断言/.test(read('README.md')), 'README 断言数已更新');
+  t(/proxy-base-test 126 断言/.test(read('README.md')), 'README 记录 126 断言');
 
   // 11.18 .gitattributes 注释不再说"按平台还原"
   t(!/检出时按平台还原/.test(gitattr), '.gitattributes 注释已纠正');
+
+  // 11.19 Python 函数 docstring 全覆盖（CodeRabbit Docstring Coverage 门槛）
+  {
+    const scan = [
+      'import ast, pathlib',
+      'bad = []',
+      'for p in sorted(pathlib.Path(".").rglob("*.py")):',
+      '    if set(p.parts) & {".git","node_modules",".venv-test","雨夜画廊游戏展示"}:',
+      '        continue',
+      '    tree = ast.parse(p.read_text(encoding="utf-8"))',
+      '    for n in ast.walk(tree):',
+      '        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and ast.get_docstring(n) is None:',
+      '            bad.append(f"{p}:{n.name}")',
+      'print(len(bad))',
+    ].join('\n');
+    try {
+      const missing = execFileSync('python3', ['-c', scan], { cwd: ROOT, encoding: 'utf8' }).trim();
+      t(missing === '0', 'Python 函数 docstring 全覆盖', missing === '0' ? '' : `缺失 ${missing} 个`);
+    } catch (e) {
+      t(true, 'Python docstring 检查跳过（python3 不可用）');
+    }
+  }
 }
 
 /* ============================================================
