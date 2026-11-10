@@ -538,7 +538,8 @@ button { font-family: var(--sans); }
   width: 54px; height: 54px; border-radius: 12px; overflow: hidden;
   border: 1px solid var(--line); background: #0a0e14; flex: none;
   display: flex; align-items: center; justify-content: center;
-  transition: all .25s ease;
+  /* 只过渡实际变化的描边/辉光；动画走 scale/rotate，不应被 transition 监听 */
+  transition: border-color .25s ease, box-shadow .25s ease;
 }
 .dialog-head .avatar svg { width: 100%; height: 100%; display: block; }
 

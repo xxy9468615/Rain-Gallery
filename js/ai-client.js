@@ -675,17 +675,29 @@ function emitLoadState(patch = {}) {
   loadListeners.forEach((cb) => { try { cb({ ...loadState }); } catch (e) { /* ignore */ } });
 }
 
-function acquireGate() {
-  return new Promise((resolve) => {
+function acquireGate(signal) {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      const i = LOAD_GATE.queue.indexOf(tryAcquire);
+      if (i >= 0) {
+        LOAD_GATE.queue.splice(i, 1);
+        emitLoadState({ depth: LOAD_GATE.queue.length });
+      }
+      reject({ code: 'ABORT', message: '请求已取消' });
+    };
     const tryAcquire = () => {
+      if (signal && signal.aborted) { onAbort(); return; }
       if (LOAD_GATE.active < LOAD_GATE.MAX) {
         LOAD_GATE.active++;
+        if (signal) signal.removeEventListener('abort', onAbort);
         resolve();
       } else {
         LOAD_GATE.queue.push(tryAcquire);
         emitLoadState({ phase: 'gate', reason: 'gate', depth: LOAD_GATE.queue.length });
       }
     };
+    // 超时中止时把仍在排队的请求撤出队列，避免它之后白占一个槽位
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
     tryAcquire();
   });
 }
@@ -847,7 +859,7 @@ async function chatWithRetry(messages, opts, rawFn) {
   const maxRetries = opts.noQueue ? 0 : 3;
   let lastErr = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    await acquireGate();
+    await acquireGate(opts.signal);
     let result;
     try {
       emitLoadState({ phase: 'running', attempt, waitMs: 0, reason: '' });
@@ -1090,10 +1102,21 @@ export async function testConnection(token, model) {
   return { reply, latency };
 }
 
-/** 请求超时包装 */
+/**
+ * 请求超时包装。
+ * 超时不仅让外层 Promise 失败，还要 abort 底层 fetch 并从 LOAD_GATE 队列撤销——
+ * 否则上游挂起时槽位一直被占，两次超时就能把并发闸门堵死（CodeRabbit 抓到）。
+ * @param {(signal:AbortSignal)=>Promise<any>} promiseFactory 接收中止信号
+ */
 export function withTimeout(promiseFactory, ms = 45000) {
-  return Promise.race([
-    promiseFactory(),
-    new Promise((_, rej) => setTimeout(() => rej({ code: 'TIMEOUT', message: `请求超时（${ms / 1000}s）` }), ms)),
-  ]);
+  const controller = new AbortController();
+  let timer;
+  const timeout = new Promise((_, rej) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      rej({ code: 'TIMEOUT', message: `请求超时（${ms / 1000}s）` });
+    }, ms);
+  });
+  const run = Promise.resolve().then(() => promiseFactory(controller.signal));
+  return Promise.race([run, timeout]).finally(() => clearTimeout(timer));
 }

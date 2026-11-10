@@ -298,7 +298,9 @@ async def api_judge(request: Request):
 #       /api/*   → 免费 AI 代理（/api/chat /api/judge /api/status）
 try:
     import gradio as gr  # noqa: E402（本地静态模式可无 gradio：仅 /game/ + /api/*）
-except ImportError:  # dev-server.sh 的探测只要求 fastapi/uvicorn/httpx
+except ImportError as e:  # 仅 gradio 本身缺失才回退；其内部依赖坏了要在部署时暴露
+    if getattr(e, 'name', None) != 'gradio':
+        raise
     gr = None
 
 

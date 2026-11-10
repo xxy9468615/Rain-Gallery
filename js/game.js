@@ -1699,6 +1699,7 @@ async function onHintRequest() {
   if (state.activeSuspect !== sid) {
     // 旁白未送达，退回本次额度——否则玩家切回来再问一次要白花一次求助
     stats.hintsUsed = Math.max(0, stats.hintsUsed - 1);
+    renderSuggestQuestions();   // 立即刷新当前审讯室的可用额度
     toast('（旁白没能送达——已退回这次求助额度）');
     save();
     return;

@@ -155,9 +155,9 @@ export async function aiProfileReport(profile, snap, sc) {
   const user = PROMPTS.PROFILE(digest, dimsLine, titleSeed);
 
   const reply = await withTimeout(
-    () => chatCompletion(
+    (signal) => chatCompletion(
       [{ role: 'system', content: sys }, { role: 'user', content: user }],
-      { temperature: 0.5, maxTokens: 900 },
+      { temperature: 0.5, maxTokens: 900, signal },
     ),
     45000,
   );

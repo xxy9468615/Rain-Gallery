@@ -225,9 +225,9 @@ async function judgeCrack(s, st, question, knownEvidences) {
   const user = PROMPTS.JUDGE_CRACK(candidates, knownEvidences, question);
   try {
     const raw = await withTimeout(
-      () => chatCompletion(
+      (signal) => chatCompletion(
         [{ role: 'system', content: sys }, { role: 'user', content: user }],
-        { temperature: 0, maxTokens: JUDGE_TOKENS, kind: 'judge' },
+        { temperature: 0, maxTokens: JUDGE_TOKENS, kind: 'judge', signal },
       ),
       JUDGE_TIMEOUT,
     );
@@ -334,7 +334,7 @@ export async function askSuspect(s, st, question, knownEvidences, ctx = {}) {
           onDelta: (piece, full) => ctx.onStream(piece, extractReplyPart(full)),
         })
       : withTimeout(
-          () => chatCompletion(messages, { temperature: 0.85, maxTokens: NPC_MAX_TOKENS }),
+          (signal) => chatCompletion(messages, { temperature: 0.85, maxTokens: NPC_MAX_TOKENS, signal }),
           NPC_TIMEOUT_MS,
         );
     const [reply, judge] = await Promise.all([replyPromise, judgeSettled]);
@@ -349,9 +349,9 @@ export async function askSuspect(s, st, question, knownEvidences, ctx = {}) {
         // 兜底同样要超时：兜底恰好在上游不稳时触发（EMPTY/NETWORK），
         // 无超时会让 busy 永久为 true、思考气泡不消失、玩家无重试入口（CodeRabbit 抓到）
         result = await withTimeout(
-          () => chatCompletion(
+          (signal) => chatCompletion(
             [{ role: 'system', content: sys }, ...st.history],
-            { temperature: 0.85, maxTokens: NPC_MAX_TOKENS },
+            { temperature: 0.85, maxTokens: NPC_MAX_TOKENS, signal },
           ),
           NPC_TIMEOUT_MS,
         );
@@ -387,13 +387,13 @@ export async function askSuspect(s, st, question, knownEvidences, ctx = {}) {
       logDecision(st, { action: wanted, ok: false, note: '前置条件不满足，规则层拒绝，要求重新决策' });
       try {
         const retry = await withTimeout(
-          () => chatCompletion(
+          (signal) => chatCompletion(
             [
               { role: 'system', content: sys },
               ...st.history.slice(0, -1),
               { role: 'user', content: `${question}\n\n（系统提示：你上轮选择的行动 "${wanted}" 不满足前置条件（${valid.rejectReason ? valid.rejectReason(st, knownEvidences) : '条件未满足'}）。请重新输出 JSON，action 改为 "none" 或其他合法值。）` },
             ],
-            { temperature: 0.85, maxTokens: NPC_MAX_TOKENS },
+            { temperature: 0.85, maxTokens: NPC_MAX_TOKENS, signal },
           ),
           NPC_TIMEOUT_MS,
         );
@@ -462,9 +462,9 @@ export async function presentToSuspect(s, st, evidence, knownEvidences) {
   let reply;
   try {
     reply = await withTimeout(
-      () => chatCompletion(
+      (signal) => chatCompletion(
         [{ role: 'system', content: sys }, ...st.history],
-        { temperature: 0.85, maxTokens: NPC_MAX_TOKENS },
+        { temperature: 0.85, maxTokens: NPC_MAX_TOKENS, signal },
       ),
       NPC_TIMEOUT_MS,
     );
@@ -515,9 +515,9 @@ export async function juryVerdict({ accusedName, chosenEvidences, foundCount, to
   const user = PROMPTS.JURY({ accusedName, chosenList, foundCount, totalEvidences, crackCount, digest, epilogueNote, truth });
 
   const reply = await withTimeout(
-    () => chatCompletion(
+    (signal) => chatCompletion(
       [{ role: 'system', content: sys }, { role: 'user', content: user }],
-      { temperature: 0.4, maxTokens: JURY_TOKENS },
+      { temperature: 0.4, maxTokens: JURY_TOKENS, signal },
     ),
     NPC_TIMEOUT_MS,
   );

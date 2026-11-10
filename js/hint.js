@@ -151,12 +151,12 @@ export async function requestHint(suspect, st, knownEvidences, hintsUsed = 1) {
     // 上游挂起时界面会永远停在「⏳ 旁白在观察……」，而 hintsUsed 已 +1、
     // 分已扣——玩家白白损失一次额度还看不到任何回应。
     raw = await withTimeout(
-      () => chatCompletion(
+      (signal) => chatCompletion(
         [
           { role: 'system', content: '你是《雨夜画廊》的旁白顾问。回复只能是提示本身，不要解释、不要 JSON、不要思考过程。' },
           { role: 'user', content: PROMPTS.HINT(suspect, st, knownEvidences, left) },
         ],
-        { temperature: 0.9, maxTokens: 200 },
+        { temperature: 0.9, maxTokens: 200, signal },
       ),
       HINT_TIMEOUT_MS,
     );

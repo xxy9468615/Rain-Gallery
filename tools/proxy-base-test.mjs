@@ -398,7 +398,7 @@ section('11 · 第二轮评审修复回归');
   const appSrc = read('app.py');
   const gitattr = read('.gitattributes');
   const devSrc = read('tools/dev-server.sh');
-  const { createStreamSanitizer } = await import('../js/ai-client.js?v=3.6.0');
+  const { createStreamSanitizer, withTimeout } = await import('../js/ai-client.js?v=3.6.0');
 
   // 11.1（Major）流式思维链：跨 chunk 有状态剥离，两处分支都接 sanitizer
   t(/function createStreamSanitizer\(\)/.test(aiSrc), '流式剥离改为跨 chunk 有状态');
@@ -428,6 +428,28 @@ section('11 · 第二轮评审修复回归');
       `实际 ${JSON.stringify(dangling)}`);
   }
 
+  // 11.1c（第四轮）超时必须中止底层请求，避免占死 LOAD_GATE 槽位
+  {
+    let seen = null;
+    const err = await withTimeout((signal) => {
+      seen = signal;
+      return new Promise((_, rej) => {
+        signal.addEventListener('abort', () => rej({ code: 'ABORT' }), { once: true });
+      });
+    }, 30).catch((e) => e);
+    t(seen && seen.aborted === true && err && err.code === 'TIMEOUT',
+      'withTimeout 超时中止底层请求并返回 TIMEOUT',
+      `aborted=${seen && seen.aborted} err=${err && err.code}`);
+    t(/await acquireGate\(opts\.signal\)/.test(aiSrc), '闸门获取接收中止信号');
+    t(/signal\.addEventListener\('abort', onAbort/.test(aiSrc), '排队中的请求可被中止撤销');
+    t(/promiseFactory\(controller\.signal\)/.test(aiSrc), '超时信号传入请求工厂');
+    t((saSrc.match(/NPC_MAX_TOKENS, signal/g) || []).length === 4, '四处 NPC 调用转发 signal');
+    t(/kind: 'judge', signal/.test(saSrc) && /JURY_TOKENS, signal/.test(saSrc),
+      '裁判 / 陪审团调用转发 signal');
+    t(/maxTokens: 200, signal/.test(hintSrc), '求助调用转发 signal');
+    t(/maxTokens: 900, signal/.test(read('js/profiler.js')), '侧写报告调用转发 signal');
+  }
+
   // 11.2 CORS 暴露 Retry-After + 注释与配置一致
   t(/expose_headers=\["Retry-After"\]/.test(appSrc), 'CORS expose_headers 含 Retry-After');
   t(!/Authorization 头予以允许/.test(appSrc), 'CORS 注释不再声称放行 Authorization');
@@ -437,6 +459,7 @@ section('11 · 第二轮评审修复回归');
   t(/@keyframes tensionPulse[\s\S]{0,60}scale:/.test(cssSrc), 'tensionPulse 改用 scale 属性');
   t(/\.avatar-dialog\.mood-broken\s*\{[^}]*animation:[^;]*tensionPulse/.test(cssSrc),
     '崩溃态摇头与心跳合并播放（不被 animation 简写覆盖）');
+  t(!/\.dialog-head \.avatar\s*\{[^}]*transition: all/.test(cssSrc), '头像过渡不再用 transition: all');
 
   // 11.4 评级徽章不被 ID 选择器 display 覆盖 hidden
   t(!/#score-rank-badge\s*\{[^}]*display:/.test(cssSrc), '徽章无 display 覆盖（hidden 生效）');
@@ -448,6 +471,8 @@ section('11 · 第二轮评审修复回归');
   t(/left: hintsLeft\(used\) \}/.test(gameSrc), '兜底旁白 left 与 requestHint 契约一致');
   t(/stats\.hintsUsed = Math\.max\(0, stats\.hintsUsed - 1\)/.test(gameSrc),
     '切走时未送达旁白退回求助额度');
+  t(/stats\.hintsUsed = Math\.max\(0, stats\.hintsUsed - 1\);\s*\n\s*renderSuggestQuestions\(\);/.test(gameSrc),
+    '退回额度后立即重绘求助区');
 
   // 11.6 出示物证后刷新对峙条 + 头像态统一 avatarMood
   t(/renderEvidenceBar\(\);\s*\n\s*renderSuggestQuestions\(\);\s*\n\s*save\(\);/.test(gameSrc),
@@ -488,8 +513,10 @@ section('11 · 第二轮评审修复回归');
 
   // 11.15 dev-server 探活三件套
   t(/import fastapi, uvicorn, httpx/.test(devSrc), 'dev-server 探活 fastapi+uvicorn+httpx');
-  t(/try:\s*\n\s*import gradio as gr[\s\S]{0,120}except ImportError/.test(appSrc),
+  t(/try:\s*\n\s*import gradio as gr[\s\S]{0,140}except ImportError as e:/.test(appSrc),
     'app.py gradio 导入可缺省（与 dev-server 探测一致）');
+  t(/except ImportError as e:[\s\S]{0,140}getattr\(e, 'name', None\) != 'gradio'/.test(appSrc),
+    '仅 gradio 缺失时回退，内部依赖故障照常抛出');
   t(/gr is not None[\s\S]{0,400}_root = app/.test(appSrc), '无 gradio 时回退 FastAPI 宿主');
   t(!/没有装 fastapi 的解释器也允许启动/.test(devSrc), '删除误导的回退注释');
 
@@ -497,9 +524,9 @@ section('11 · 第二轮评审修复回归');
   t(!/m\.index \+ body\.slice\(0, m\.index\)\.length/.test(read('tools/proxy-base-test.mjs')),
     'first() 偏移不再算成 2*m.index');
 
-  // 11.17 README 断言数与实际一致（114）
-  t(!/proxy-base-test (?:61|74) 断言/.test(read('README.md')), 'README 断言数已更新');
-  t(/proxy-base-test 114 断言/.test(read('README.md')), 'README 记录 114 断言');
+  // 11.17 README 断言数与实际一致（125）
+  t(!/proxy-base-test (?:61|74|114|124) 断言/.test(read('README.md')), 'README 断言数已更新');
+  t(/proxy-base-test 125 断言/.test(read('README.md')), 'README 记录 125 断言');
 
   // 11.18 .gitattributes 注释不再说"按平台还原"
   t(!/检出时按平台还原/.test(gitattr), '.gitattributes 注释已纠正');
