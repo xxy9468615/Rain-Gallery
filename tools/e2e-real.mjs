@@ -61,7 +61,17 @@ await p.evaluate(() => { const g = document.querySelector('#modal-guide'); if (g
 await p.waitForTimeout(300);
 await step('进入审讯', async () => { await p.locator('#btn-to-interrogate').click(); await p.waitForTimeout(700); return p.evaluate(() => !document.querySelector('#phase-interrogate').classList.contains('hidden')); });
 await step('三维数值条渲染', async () => p.evaluate(() => document.querySelectorAll('#dialog-head .rel-fill').length >= 3));
-await step('建议提问气泡', async () => p.evaluate(() => document.querySelectorAll('.suggest-chip').length >= 3));
+// v3.7 · 静态「建议提问」「已被求助系统替换：不再把最优问句原文喂给玩家，
+// 改为一个求助按钮（点完向 AI 要一个方向），一局 3 次并扣分。
+await step('求助按钮在位（替代静态建议提问）', async () => p.evaluate(() => {
+  const btn = document.getElementById('btn-hint');
+  return btn ? btn.textContent.trim() : false;
+}));
+await step('证据对峙条常驻', async () => p.evaluate(() => {
+  const bar = document.getElementById('evidence-bar');
+  return bar && !bar.classList.contains('hidden') && bar.querySelectorAll('.ev-chip').length > 0
+    ? bar.querySelectorAll('.ev-chip').length + ' 个物证图标' : false;
+}));
 
 // 真实 AI 提问(含流式)
 const t0 = Date.now();

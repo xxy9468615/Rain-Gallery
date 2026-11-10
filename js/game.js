@@ -520,6 +520,7 @@ function avatarSVG(s, mood = 'calm', { size = 80 } = {}) {
   // 2. 策展助理 —— 陈默
   if (id === 'chenmo') {
     const isShaken = mood === 'shaken';
+    const isDefensive = mood === 'defensive';
     const isBroken = mood === 'broken';
     return `<svg viewBox="0 0 80 80" width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
       <defs>
@@ -561,6 +562,13 @@ function avatarSVG(s, mood = 'calm', { size = 80 } = {}) {
         <circle cx="32.5" cy="50" r="1.4" fill="#a4d1f7"/>
         <path d="M36 47 Q40 49 44 47" stroke="#7a524a" stroke-width="2" fill="none"/>
         <line x1="36" y1="19" x2="38" y2="33" stroke="#1a222a" stroke-width="1.6"/>
+      ` : isDefensive ? `
+        <!-- 防守（压力≥2 且敌意高）：咬牙抿嘴，目光下压不示弱 -->
+        <path d="M28 29 L36 30" stroke="#1d2733" stroke-width="2" fill="none"/>
+        <path d="M44 30 L52 29" stroke="#1d2733" stroke-width="2" fill="none"/>
+        <circle cx="33" cy="35" r="1.9" fill="#161d24"/><circle cx="47" cy="35" r="1.9" fill="#161d24"/>
+        <line x1="36" y1="46.5" x2="44" y2="46.5" stroke="#6b4a45" stroke-width="2.4" stroke-linecap="round"/>
+        <path d="M39.5 27 L40.5 30" stroke="#1d2733" stroke-width="1.1"/>
       ` : isShaken ? `
         <!-- 动摇：眼神慌乱、冷汗滑落、紧绷 -->
         <circle cx="33" cy="36.5" r="1.6" fill="#141a20"/><circle cx="47" cy="36.5" r="1.6" fill="#141a20"/>
@@ -584,6 +592,7 @@ function avatarSVG(s, mood = 'calm', { size = 80 } = {}) {
   // 3. 画廊老板 —— 林曼青
   if (id === 'linmanqing') {
     const isShaken = mood === 'shaken';
+    const isDefensive = mood === 'defensive';
     const isBroken = mood === 'broken';
     return `<svg viewBox="0 0 80 80" width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
       <defs>
@@ -619,6 +628,13 @@ function avatarSVG(s, mood = 'calm', { size = 80 } = {}) {
         <circle cx="33" cy="35.5" r="1.8" fill="#23161f"/><circle cx="47" cy="35.5" r="1.8" fill="#23161f"/>
         <path d="M35 48 Q40 45.5 45 48" stroke="#7a2a35" stroke-width="2.2" fill="none" stroke-linecap="round"/>
         <path d="M48 24 Q44 32 46 42" stroke="#24161f" stroke-width="1.6" fill="none"/>
+      ` : isDefensive ? `
+        <!-- 防守：挑眉不示弱、唇角压平、下颌收紧 -->
+        <path d="M27 27.5 L37 29.5" stroke="#321e29" stroke-width="2.2" fill="none"/>
+        <path d="M43 29.5 L53 27.5" stroke="#321e29" stroke-width="2.2" fill="none"/>
+        <circle cx="33" cy="35" r="2.2" fill="#23161f"/><circle cx="47" cy="35" r="2.2" fill="#23161f"/>
+        <circle cx="26" cy="29" r="1.2" fill="#88b7e0"/>
+        <line x1="35" y1="46.5" x2="45" y2="46.5" stroke="#9e2838" stroke-width="2.8" stroke-linecap="round"/>
       ` : isShaken ? `
         <!-- 动摇：眉头紧锁、神色紧绷焦躁 -->
         <path d="M28 29.5 Q33 26.5 37 28.5" stroke="#321e29" stroke-width="2.2" fill="none"/>
@@ -641,6 +657,7 @@ function avatarSVG(s, mood = 'calm', { size = 80 } = {}) {
 
   // 4. 美院实习生 —— 苏晓
   const isShaken = mood === 'shaken';
+  const isDefensive = mood === 'defensive';
   const isBroken = mood === 'broken';
   return `<svg viewBox="0 0 80 80" width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
     <defs>
@@ -677,6 +694,12 @@ function avatarSVG(s, mood = 'calm', { size = 80 } = {}) {
       <path d="M28 28.5 Q33 25.5 38 29.5" stroke="#251c17" stroke-width="2" fill="none"/>
       <path d="M42 29.5 Q47 25.5 52 28.5" stroke="#251c17" stroke-width="2" fill="none"/>
       <path d="M35 48 Q40 45 45 48" stroke="#8c3a44" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+    ` : isDefensive ? `
+      <!-- 防守（压力≥2 且敌意高）：咬住下唇、眼睫下垂、肩膀内缩 -->
+      <path d="M28 29.5 Q33 27 37 29" stroke="#2c1c24" stroke-width="2" fill="none"/>
+      <path d="M43 29 Q47 27 52 29.5" stroke="#2c1c24" stroke-width="2" fill="none"/>
+      <circle cx="33" cy="34.8" r="2" fill="#1b1512"/><circle cx="47" cy="34.8" r="2" fill="#1b1512"/>
+      <path d="M35 47 Q40 46 45 47" stroke="#8c3a44" stroke-width="2.2" fill="none"/>
     ` : isShaken ? `
       <!-- 动摇：瞳孔地震惊恐、张嘴惊呼、冷汗 -->
       <ellipse cx="33" cy="35" rx="3.6" ry="4" fill="#1b1512"/>
@@ -876,6 +899,96 @@ const ROOM_ART = {
     <circle cx="200" cy="30" r="5" fill="#c4574e"/>
     <circle cx="200" cy="30" r="12" fill="#c4574e" opacity=".15"/>`,
 };
+
+/**
+ * v3.7 · 开场画幅 SVG：雨夜画廊大门。
+ * 原 intro-art 是一个 120px 的空圆 div（CSS 只有两层径向渐变），
+ * 信息量与"设计感"都近乎零。改为可读的场景画幅：
+ *   雨夜天空 / 玻璃大门内透出暖光 / 门侧被划破的画框剪影 / 三条雨带
+ * 延续仓库既有的"纯代码 SVG、零外部素材"路线（规范 §3），
+ * 动效全部走 CSS keyframes（rain-fall / breathe / slash-flash）。
+ */
+function introArtSVG() {
+  // 雨丝：多条不同长度/斜率的线段，避免"同一根复制"的机械感
+  const rain = (count, cls, len, drift, opacity) => Array.from({ length: count }, (_, i) => {
+    const x = ((i * 97) % 100) + (i % 3) * 0.6;
+    const y = ((i * 41) % 100);
+    return `<line class="${cls}" x1="${x}" y1="${y}" x2="${x + drift}" y2="${y + len}"
+      stroke="#9fc2e0" stroke-width=".7" opacity="${opacity}"/>`;
+  }).join('');
+  return `<svg viewBox="0 0 400 200" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+  <defs>
+    <linearGradient id="ig-sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0a0f16"/><stop offset="1" stop-color="#141d28"/>
+    </linearGradient>
+    <radialGradient id="ig-warm" cx="50%" cy="60%" r="55%">
+      <stop offset="0" stop-color="#e8c56a" stop-opacity=".55"/>
+      <stop offset="55%" stop-color="#c8963e" stop-opacity=".18"/>
+      <stop offset="100%" stop-color="#c8963e" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ig-glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2634" stop-opacity=".92"/>
+      <stop offset="1" stop-color="#0b1119" stop-opacity=".98"/>
+    </linearGradient>
+    <clipPath id="ig-door-clip"><rect x="128" y="52" width="144" height="122" rx="3"/></clipPath>
+  </defs>
+
+  <rect width="400" height="200" fill="url(#ig-sky)"/>
+  <!-- 远处街灯：三盏，越远越暗 -->
+  <circle cx="52" cy="58" r="4" fill="#c4a06a" opacity=".35"/>
+  <circle cx="352" cy="46" r="3" fill="#c4a06a" opacity=".22"/>
+  <circle cx="300" cy="72" r="2.5" fill="#c4a06a" opacity=".16"/>
+  <!-- 画廊侧影墙 -->
+  <rect x="40" y="70" width="320" height="104" fill="#0d131c"/>
+  <path d="M40 70 L200 44 L360 70" stroke="#1a2431" stroke-width="2" fill="none"/>
+  <!-- 玻璃大门：门内透暖光 -->
+  <g class="intro-glow">
+    <rect x="128" y="52" width="144" height="122" rx="3" fill="url(#ig-warm)"/>
+  </g>
+  <g clip-path="url(#ig-door-clip)">
+    <rect x="128" y="52" width="144" height="122" fill="url(#ig-glass)"/>
+    <!-- 门内景：远处展墙与一幅画的轮廓 -->
+    <rect x="140" y="112" width="120" height="46" fill="#1d2836" opacity=".7"/>
+    <rect x="164" y="92" width="72" height="42" rx="2" fill="#243244" stroke="#3d4f63" stroke-width="1"/>
+    <rect x="170" y="98" width="60" height="30" fill="#2c3a4c"/>
+    <path d="M170 128 q22 -18 34 -6 t26 -8" stroke="#4a5f75" stroke-width="1.2" fill="none" opacity=".7"/>
+  </g>
+  <!-- 门框 + 双侧门柱 -->
+  <rect x="128" y="52" width="144" height="122" rx="3" fill="none" stroke="#31415a" stroke-width="2.5"/>
+  <line x1="200" y1="52" x2="200" y2="174" stroke="#31415a" stroke-width="2"/>
+  <!-- 门牌：RAIN GALLERY -->
+  <text x="200" y="44" text-anchor="middle" font-size="9" letter-spacing="3"
+    fill="#8fa4bb" font-family="serif" opacity=".85">RAIN GALLERY</text>
+  <!-- 被划破的画框剪影（本案核心意象：画被毁，却没被偷走） -->
+  <g class="intro-slash">
+    <rect x="70" y="104" width="46" height="34" rx="2" fill="none" stroke="#5c6d80" stroke-width="1.5"/>
+    <path d="M72 118 L114 122 M72 124 L112 130" stroke="#c4574e" stroke-width="1.6" opacity=".8"/>
+  </g>
+  <!-- 三级台阶 + 地面反光 -->
+  <rect x="118" y="176" width="164" height="5" rx="2" fill="#1a2431"/>
+  <rect x="110" y="181" width="180" height="5" rx="2" fill="#151e29"/>
+  <rect x="100" y="186" width="200" height="6" rx="2" fill="#101822"/>
+  <ellipse cx="200" cy="192" rx="96" ry="8" fill="#e8c56a" opacity=".08"/>
+  <!-- 雨带：压在最上层，用 CSS 做下落动效 -->
+  <g>${rain(26, 'intro-rain-a', 16, 6, .30)}</g>
+  <g>${rain(20, 'intro-rain-b', 22, 10, .20)}</g>
+  <g>${rain(30, 'intro-rain-c', 12, 4, .38)}</g>
+</svg>`;
+}
+
+/**
+ * v3.7 · 第四头像态：defensive（咬牙抿嘴的防守姿态）。
+ * 原三态只有 calm→shaken→broken，压力跨过 2 时表情直接从
+ * "镇定"跳成"动摇"，中间那段"被戳到、正在咬牙硬撑"的
+ * 过程没有画面。defensive 填这个缝：压力≥2 未崩溃 且 敌意≥60。
+ * 纯函数，只读压力/敌意/阶段，可存档重算。
+ */
+function avatarMood(st) {
+  if (!st) return 'calm';
+  if (stageOf(st) === 'broken') return 'broken';
+  if (st.pressure >= 2 && (st.hostility || 0) >= 60) return 'defensive';
+  return stageOf(st);
+}
 
 function roomArtSVG(room) {
   const art = (ROOM_ART[room.art] || ROOM_ART.atrium)();
@@ -1295,7 +1408,7 @@ function renderNotebook() {
 
 const suspectById = (id) => CASE.suspects.find((s) => s.id === id);
 const evidenceById = (id) => CASE.evidences.find((e) => e.id === id);
-const MOOD_TEXT = { calm: '🛡 镇定', shaken: '🌀 动摇', broken: '💥 防线崩溃' };
+const MOOD_TEXT = { calm: '🛡 镇定', defensive: '😬 咬牙硬撑', shaken: '🌀 动摇', broken: '💥 防线崩溃' };
 
 /* ---------- v3.0 · 三维关系数值条（卡片 + 审讯头部实时可见） ----------
  * 规范 §5：350ms 缓动 / 压力 >80% 震颤红光 / 信任达阈脉冲 / 敌意告警橙边 */
@@ -1323,7 +1436,7 @@ function relBarsHTML(st) {
 function renderSuspectList() {
   $('suspect-list').innerHTML = CASE.suspects.map((s) => {
     const st = state.suspects.get(s.id);
-    const mood = stageOf(st);
+    const mood = avatarMood(st);
     const active = state.activeSuspect === s.id ? ' active' : '';
     const locked = st.lawyerLock ? ' locked' : '';
     return `<button class="suspect-card${active}${locked}" data-suspect="${s.id}" ${st.lawyerLock ? 'title="律师到场，拒绝问话"' : ''} aria-pressed="${state.activeSuspect === s.id}" aria-label="审问 ${s.name}，${s.role}，当前状态${MOOD_TEXT[mood]}">
@@ -1434,7 +1547,7 @@ function selectSuspect(id, force = false) {
   if (state.activeSuspect === id && !force) return;
   const s = suspectById(id);
   const st = state.suspects.get(id);
-  const mood = stageOf(st);
+  const mood = avatarMood(st);
 
   // v3.0 · 律师锁：林曼青叫了律师后无法再选她
   if (st.lawyerLock) {
@@ -1445,6 +1558,9 @@ function selectSuspect(id, force = false) {
   state.activeSuspect = id;
   audio.suspect();
   renderSuspectList();
+  // v3.7 · 证据对峙条：必须放在 state.activeSuspect 赋值之后——
+  // renderEvidenceBar 的前置守卫校验 activeSuspect，放在前面会被判空而隐藏
+  renderEvidenceBar();
 
   const modeText = describeEndpoint();
   const isAI = modeText.startsWith('🎁') || modeText.startsWith('🔑') || modeText.startsWith('🧪');
@@ -1494,6 +1610,9 @@ function showTyping() {
   div.innerHTML = '<i></i><i></i><i></i>';
   stream.appendChild(div);
   stream.scrollTop = stream.scrollHeight;
+  // v3.7 · 头像加「思考中」外圈光环（流式生成全程可见）
+  const av = document.querySelector('.avatar-dialog');
+  if (av) av.classList.add('streaming');
   // 1.6s 后开始轮换斟酌话术(首个 chunk 到达即被 hideTyping 清掉)
   clearInterval(thinkingTimer);
   thinkingIdx = 0;
@@ -1509,6 +1628,8 @@ function hideTyping() {
   clearInterval(thinkingTimer);
   const t = $('typing-bubble');
   if (t) t.remove();
+  const av = document.querySelector('.avatar-dialog');
+  if (av) av.classList.remove('streaming');
 }
 
 let busy = false;
@@ -1639,6 +1760,7 @@ async function sendQuestion(isRetry = false) {
     // 流式气泡退场(最终以解析后的 reply 为准重绘,避免把 JSON 残留展示给玩家)
     if (streamBubble) { streamBubble.remove(); streamBubble = null; }
     if (res.note) addBubble('system', `⚠ ${res.note}`);
+    renderEvidenceBar();   // 刷新「已出示」标记
     // v3.0 · AI 裁判命中（与关键词命中并集，共同保证进度下限）
     if (res.judgeHit) {
       const idx = Number(res.judgeHit.tag.split(':')[1]);
@@ -1653,7 +1775,7 @@ async function sendQuestion(isRetry = false) {
     addBubble('suspect', res.text, s.color);
     if (res.cracked) {
       state.crackCount++;
-      const mood = stageOf(st);
+      const mood = avatarMood(st);
       if (mood === 'broken' && !st.confessed) {
         addBubble('system', `【${s.name} 的心理防线已崩溃——继续追问让他吐露实情】`);
       } else if (mood === 'shaken') {
@@ -1702,6 +1824,42 @@ function showAiBlockedModal(detail, retryFn) {
   modal.classList.remove('hidden');
 }
 
+/**
+ * v3.7 · 证据对峙条：审讯时常驻的窄栏，点图标直接出示。
+ * 原先出示物证必须打开 #modal-present 弹窗——审到一半要选证，
+ * 弹窗一开就把审讯节奏打断。现在常驻在对话流下方，
+ * 「想到就点」，弹窗保留给需要看全名的场合。
+ */
+function renderEvidenceBar() {
+  const bar = $('evidence-bar');
+  if (!bar) return;
+  if (state.phase !== 'interrogate' || !state.activeSuspect || !state.found.length) {
+    bar.classList.add('hidden');
+    bar.innerHTML = '';
+    return;
+  }
+  const st = state.suspects.get(state.activeSuspect);
+  if (st && st.lawyerLock) {
+    bar.classList.remove('hidden');
+    bar.innerHTML = '<span class="ev-bar-lock">⚖️ 律师在场，拒绝查看任何物证</span>';
+    return;
+  }
+  bar.classList.remove('hidden');
+  bar.innerHTML = '<span class="ev-bar-label">出示：</span>' + state.found.map((id) => {
+    const e = CASE.evidences.find((x) => x.id === id);
+    if (!e) return '';
+    const shown = (st && st.triggeredKeys && st.triggeredKeys.has(`ev:${id}`)) ? ' shown' : '';
+    return `<button class="ev-chip${shown}" data-ev="${id}" title="${e.name}${shown ? '（已出示过）' : ''}"
+      aria-label="出示物证 ${e.name}">${e.icon}</button>`;
+  }).join('');
+  bar.querySelectorAll('.ev-chip').forEach((el) => {
+    el.addEventListener('click', () => {
+      audio.click();
+      doPresent(el.dataset.ev);
+    });
+  });
+}
+
 function openPresentModal() {
   if (!state.activeSuspect) { toast('先选择一名嫌疑人'); return; }
   if (!state.found.length) { toast('你还没有收集到任何物证'); return; }
@@ -1747,7 +1905,7 @@ async function doPresent(evidenceId) {
     if (res.cracked) triggerStrike();
     addBubble('suspect', res.text, s.color);
     if (res.cracked) state.crackCount++;
-    const mood = stageOf(st);
+    const mood = avatarMood(st);
     if (mood === 'broken' && !st.confessed) {
       addBubble('system', `【${s.name} 的心理防线已崩溃——继续追问让他吐露实情】`);
     }
@@ -3138,6 +3296,11 @@ async function boot() {
   initModalAccessibility();      // 弹窗焦点圈定 / ESC 关闭 / 焦点归还
   initLoadQueueUI();
   initTokenSafety();
+  // v3.7 · 开场画幅注入（原为 CSS 空圆，信息量近乎零）
+  // 注意：intro-art 是 class 不是 id，必须 querySelector——
+  // 这里用 $('intro-art') 取过一次 null，导致画幅静默不显示。
+  const introArt = document.querySelector('.intro-art');
+  if (introArt && !introArt.childElementCount) introArt.innerHTML = introArtSVG();
 
   const has = load();
   setupIntroGateway(has);

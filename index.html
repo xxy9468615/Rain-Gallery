@@ -121,6 +121,9 @@
         <div class="dialog-panel">
           <div id="dialog-head" class="dialog-head"></div>
           <div id="dialog-stream" class="dialog-stream"></div>
+          <!-- v3.7 · 证据对峙条：常驻窄栏，点图标即出示。
+               原先要开 #modal-present 弹窗才能选，打断审讯节奏。 -->
+          <div id="evidence-bar" class="evidence-bar hidden" role="group" aria-label="已收集物证，点击出示"></div>
           <div id="suggest-questions" class="suggest-questions"></div>
           <div class="dialog-input-row">
             <input id="dialog-input" type="text" maxlength="80" placeholder="输入你的问题，回车发送…" autocomplete="off" aria-label="向嫌疑人提问">
