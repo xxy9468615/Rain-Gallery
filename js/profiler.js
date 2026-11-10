@@ -8,6 +8,7 @@
 
 import { CASE } from './case-data.js?v=3.6.0';
 import { chatCompletion, withTimeout } from './ai-client.js?v=3.6.0';
+import { PROMPTS } from './prompts.js?v=3.6.0';
 
 /* ---------------- 五维能力定义 ---------------- */
 
@@ -129,25 +130,8 @@ export async function aiProfileReport(profile, snap, sc) {
   const dimsLine = profile.labels.map((l, i) => `${l} ${profile.dims[i]}`).join(' / ');
   const titleSeed = styleTitle(profile);
 
-  const sys = `你是《雨夜画廊》推理游戏里的资深刑侦顾问，为刚结案的侦探（玩家）撰写一份「能力侧写报告」。你的评估必须与解谜行为强绑定：所有判断都要引用玩家的真实行为痕迹数据，禁止空泛的赞美；同时运用正向认知重构——无论分数高低，都要从数据中找到真实的执行长板并指出现实能力映射（巴纳姆效应的合理运用：结论具体到行为，让玩家觉得"准且有成就感"）。
-
-输出格式（严格遵守，每行一条，不要 markdown 标记、不要列表符号、不要加引号）：
-风格称号：<4-10字的称号>｜<一句话注解>
-长板·<长板名>：<引用至少一处具体行为痕迹（如用时/发现顺序/出示次数/提问分布）> → <映射到现实中的能力，如细致耐心、信息组织力、心理洞察等>
-长板·<长板名>：<同上格式>
-长板·<长板名>：（可选，最多三条）
-盲区提醒：<引用一处具体行为数据，温和指出一个可提升点，不要否定玩家>
-下一案建议：<一条具体、可执行的下一步行动建议>
-
-要求：口吻冷静克制、带一点雨夜黑色电影的质感；"长板"至少两条；引用行为数据至少 3 处；全文不超过 380 字。`;
-
-  const user = `侦探的行为痕迹数据：
-${digest}
-
-五维能力派生分（0-100）：${dimsLine}
-规则引擎初步判断的思维风格：${titleSeed.t}（${titleSeed.n}）
-
-请据此撰写侧写报告。`;
+  const sys = '你是《雨夜画廊》推理游戏里的资深刑侦顾问。回复正文就是侧写报告本身，不要 JSON、不要标题编号、不要解释你的评估过程。';
+  const user = PROMPTS.PROFILE(digest, dimsLine, titleSeed);
 
   const reply = await withTimeout(
     () => chatCompletion(
