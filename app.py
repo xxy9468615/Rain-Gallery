@@ -57,13 +57,24 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = FastAPI(title="Rain Gallery Free-AI Proxy", docs_url=None, redoc_url=None)
 
 # ---------------- CORS（静态托管的前端需要跨域调用本代理） ----------------
-# 默认放开 GET /api/status 与 OPTIONS 预检，POST 通过 CORS_ALLOWED_ORIGINS 白名单约束；
-# 留空则等同任意 Origin（仅建议本地开发使用）。Authorization 头予以允许，
-# 但本代理免费通道一律由服务端持有 Key，前端传什么都不生效。
-_CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+# 策略：留空 = 只允许同源，跨域一律拒绝（默认拒绝，fail-closed）。
+#   - 同域部署（创空间 / 本仓库 app.py 自己托管静态文件）：浏览器不发 Origin，
+#     中间件直接放行，无需任何配置。
+#   - 前后端分域（前端 GitHub Pages + 后端 Render）：必须显式把前端 Origin
+#     写进 CORS_ALLOWED_ORIGINS，例如 https://user.github.io。
+#   - 只有在本地调试时才值得写 CORS_ALLOWED_ORIGINS=*（任意来源可跨域调用，
+#     会消耗共享日额度，且 CORS 拦不住非浏览器客户端，不能当鉴权用）。
+# allow_credentials=False：免费通道不依赖 Cookie，绝不与 allow_origins=["*"] 组合放大风险。
+# Authorization 头予以允许，但本代理免费通道一律由服务端持有 Key，前端传什么都不生效。
+def _cors_origins() -> list:
+    """解析 CORS 来源白名单（逗号分隔）；空列表 = 未配置 = 拒绝跨域。"""
+    raw = os.environ.get("CORS_ALLOWED_ORIGINS", "")
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_CORS_ORIGINS or ["*"],
+    allow_origins=_cors_origins(),
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "X-Session-Id"],
@@ -76,6 +87,7 @@ _global = {"day": None, "count": 0}
 
 
 def _today():
+    """当天日期字符串，全局日上限按它归零。"""
     return date.today().isoformat()
 
 
@@ -91,10 +103,12 @@ def _client_ip(request: Request) -> str:
 
 
 def _session_counts(session_id: str):
+    """取（必要时创建）某会话的计额桶；仅存计数，不含任何对话内容。"""
     return _sessions.setdefault(session_id, {"chat": 0, "judge": 0})
 
 
 def _global_ok() -> bool:
+    """全局当日额度是否还有余量；跨天自动归零。"""
     today = _today()
     if _global["day"] != today:
         _global["day"] = today
@@ -103,6 +117,7 @@ def _global_ok() -> bool:
 
 
 def _ip_ok(ip: str) -> bool:
+    """单 IP 每小时额度闸（防脚本刷量）；超额返回 False 即拒绝。"""
     bucket = int(time.time() // 3600)
     cur = _ip_hour.get(ip)
     if not cur or cur[0] != bucket:
@@ -115,12 +130,14 @@ def _ip_ok(ip: str) -> bool:
 
 
 def _err(status: int, code: str, message: str) -> JSONResponse:
+    """统一错误响应体：{"error": {"code", "message"}}，前端按 code 分流提示。"""
     return JSONResponse({"error": {"code": code, "message": message}}, status_code=status)
 
 
 # ---------------- 免费通道状态 ----------------
 @app.get("/api/status")
 async def api_status(request: Request):
+    """免费通道可用性 / 模型名 / 本会话与当日剩余额度（无任何对话内容）。"""
     session_id = request.headers.get("x-session-id", "")
     used = _sessions.get(session_id, {}).get("chat", 0) if session_id else 0
     return {
@@ -135,6 +152,11 @@ async def api_status(request: Request):
 
 # ---------------- 统一转发 ----------------
 async def _forward(request: Request, kind: str):
+    """免费通道统一入口：校验 → 计额 → 转发上游（chat 支持 SSE 流式，judge 非流式）。
+
+    前端传来的 model / Authorization 一律忽略：模型与 Key 由服务端环境变量决定，
+    玩家 Token 也不会经过本代理（自填 Key 时浏览器直连官方端点）。
+    """
     if not PROXY_TOKEN:
         return _err(503, "PROXY_UNAVAILABLE", "免费通道未配置平台 Key（RG_PROXY_TOKEN），请使用自定义 Key 模式")
 
@@ -191,6 +213,7 @@ async def _forward(request: Request, kind: str):
     # ---- 流式透传（SSE）:台词边生成边显示，缓解长推理模型的等待感 ----
     if stream:
         async def event_gen():
+            """逐行透传上游 SSE；流已开始则以 error 事件通知前端回退本地剧本。"""
             try:
                 async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT, trust_env=False) as client:
                     async with client.stream("POST", API_BASE, json=upstream, headers=headers) as resp:
@@ -251,13 +274,16 @@ async def _forward(request: Request, kind: str):
     return JSONResponse(data)
 
 
+
 @app.post("/api/chat")
 async def api_chat(request: Request):
+    """嫌疑人台词 / 陪审团 / 侧写报告主通道（可流式，占用会话主额度）。"""
     return await _forward(request, "chat")
 
 
 @app.post("/api/judge")
 async def api_judge(request: Request):
+    """「是否戳穿矛盾」AI 裁判通道（强制非流式，占用独立额度）。"""
     return await _forward(request, "judge")
 
 
@@ -269,6 +295,7 @@ import gradio as gr  # noqa: E402（延迟导入：本地静态模式无 gradio 
 
 
 def _build_demo():
+    """构建创空间 Gradio 入口页（介绍 + 开始游戏按钮），本地静态模式无 gradio 时跳过。"""
     with gr.Blocks(title="雨夜画廊 · Rain Gallery", theme=gr.themes.Default()) as demo:
         gr.HTML("""
         <div style="text-align:center;font-family:serif;padding:26px 10px 8px;">

@@ -224,6 +224,19 @@
           </div>
         </div>
 
+        <!-- v3.6 · 免费通道代理基址：两种接口来源共用，静态托管时指向独立后端。
+             必须放在 #custom-key-block 之外——该容器在免费模式下带 .dim，
+             其 .text-input 会被 pointer-events:none 禁用，免费通道玩家就改不了基址。 -->
+        <label class="field-label" for="settings-proxy-base">免费通道代理基址（默认同源 · 静态托管填后端地址）</label>
+        <div class="token-input-row">
+          <input id="settings-proxy-base" type="url" class="text-input"
+            placeholder="留空 = 同源 /api/*；独立后端填 https://your-api.onrender.com" autocomplete="off" spellcheck="false">
+        </div>
+        <p class="hint-line" id="proxy-base-hint" style="text-align:left;margin:6px 0 0;">
+          两种接口来源共用，切换不影响此设置。同源部署（魔搭创空间等）留空即可；若前端与后端分域部署
+          （前端在 GitHub Pages、后端在 Render/Railway），填后端的<b>根地址</b>即可跨域调用，服务端需开启 CORS。
+        </p>
+
         <!-- 自定义 Key 配置区（选择「自定义」时激活） -->
         <div id="custom-key-block">
 
@@ -334,17 +347,6 @@
           placeholder="api-inference.modelscope.cn&#10;api.openai.com" autocomplete="off" spellcheck="false"></textarea>
         <p class="hint-line" id="whitelist-hint" style="text-align:left;margin:6px 0 0;">
           填写后，只有列表内的域名可通过校验——防止配置被篡改后把 Token 发往陌生地址。
-        </p>
-
-        <!-- v3.6 · 免费通道代理基址：静态托管时指向独立后端 -->
-        <label class="field-label" for="settings-proxy-base">免费通道代理基址（默认同源 · 静态托管填后端地址）</label>
-        <div class="token-input-row">
-          <input id="settings-proxy-base" type="url" class="text-input"
-            placeholder="留空 = 同源 /api/*；独立后端填 https://your-api.onrender.com" autocomplete="off" spellcheck="false">
-        </div>
-        <p class="hint-line" id="proxy-base-hint" style="text-align:left;margin:6px 0 0;">
-          同源部署（魔搭创空间等）留空即可。若前端与后端分域部署（前端在 GitHub Pages、后端在
-          Render/Railway），填后端的<b>根地址</b>即可跨域调用，服务端需开启 CORS。
         </p>
 
         <label class="field-label" for="settings-model">扮演模型</label>

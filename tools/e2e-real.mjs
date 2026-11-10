@@ -1,15 +1,16 @@
 /* 真实 AI 端到端回归(本地测试用):加载 → 徽标 → 开新局 → 收集物证 → 审讯 → 流式/裁判/行动
  *
  * 依赖 playwright-core(仅本地测试用,不属于游戏运行时):
- *   npm i --no-save playwright-core   # 需要本机 Chrome
+ *   npm i --no-save playwright-core   # 另需本机 Chrome/Chromium
  * 运行(服务端需带 .env 配置启动,游戏本体挂在 /game/):
- *   node tools/e2e-real.mjs
+ *   node tools/e2e-real.mjs [http://127.0.0.1:8092]
+ * 浏览器探测顺序见 tools/_browser.mjs（CHROME_PATH 可显式指定）
  */
-import { chromium } from 'playwright-core';
+import { launchBrowser } from './_browser.mjs';
 const BASE = (process.argv[2] || 'http://127.0.0.1:8092').replace(/\/$/, '');
 // app.py 把游戏本体挂在 /game/（Gradio 占根路径），/api/* 与静态同源
 const GAME = `${BASE}/game/`;
-const b = await chromium.launch({ headless: true, executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe' });
+const b = await launchBrowser();
 const p = await b.newPage();
 const errs = [];
 p.on('pageerror', (e) => errs.push(String(e).slice(0, 150)));

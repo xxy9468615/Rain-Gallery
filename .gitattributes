@@ -1,3 +1,11 @@
+# ---------- 换行符归一化 ----------
+# 仓库一律只存 LF。Windows 上 git config core.autocrlf=true 时若不置此规则，
+# 提交会把 CRLF 原样写进 blob，Linux/macOS 检出后整个文件 diff 全变（曾污染 PR）。
+# * text=auto：git 自动识别文本文件并在入库时归一为 LF，检出时按平台还原。
+# 注意：LFS 条目显式 -text，二进制绝不被当作文本处理。
+* text=auto eol=lf
+
+# ---------- 以下为 Git LFS 大文件（勿删）----------
 *.7z filter=lfs diff=lfs merge=lfs -text
 *.arrow filter=lfs diff=lfs merge=lfs -text
 *.bin filter=lfs diff=lfs merge=lfs -text

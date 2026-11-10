@@ -209,12 +209,14 @@ git commit --no-verify         # 确认无误时跳过
 
 ```bash
 # 1. 准备测试环境（fastapi/uvicorn/httpx，与运行时隔离）
-uv venv .venv-test --python 3.12
-uv pip install --python .venv-test/Scripts/python.exe fastapi uvicorn httpx
-npm i --no-save playwright-core        # 端到端需要，本机 Chrome
+#    Linux / macOS                       # Windows（PowerShell）
+python3 -m venv .venv-test               # python -m venv .venv-test
+.venv-test/bin/pip install fastapi uvicorn httpx   # .venv-test\Scripts\pip install ...
+npm i --no-save playwright-core
 
 # 2. 启动后端（复用 app.py 的 FastAPI app，跳过 Gradio 入口页）
-.venv-test/Scripts/python.exe tools/_api_server.py --port 8092
+.venv-test/bin/python tools/_api_server.py --port 8092   # Windows: .venv-test\Scripts\python ...
+#    跨平台等价写法：bash tools/dev-server.sh 8092（自动探测解释器）
 
 # 3. 一键测试
 node tools/ai-test.mjs                 # 预检 → 契约 → 真实端到端
@@ -234,6 +236,29 @@ node tools/ai-test.mjs --e2e           # 只跑真实浏览器端到端
 >
 > 密钥只从 `.env` / 环境变量读取，**绝不打印、绝不写入日志或提交物**；
 > `.env` 与 `.venv-test/` 均已在 `.gitignore` 中。
+
+### 🖥️ 跨平台注意（Linux / macOS / Windows）
+
+| 项 | 处理方式 |
+|---|---|
+| 换行符 | `.gitattributes` 置 `* text=auto eol=lf`，仓库与 blob 一律 LF；Windows 检出自动还原 CRLF，不会污染 diff |
+| venv 路径 | `.venv-test/bin/python`（Linux/macOS）与 `.venv-test/Scripts/python.exe`（Windows）都被支持；`dev-server.sh` / pre-commit 会自动探测（且会实际执行探活，避免选中别的平台留下的无效解释器），也可用 `PYTHON` 环境变量显式指定 |
+| 浏览器 | e2e 脚本经 `tools/_browser.mjs` 按平台探测 Chrome/Chromium，`CHROME_PATH=/path/to/chrome` 可显式指定；找不到时给出安装指引而非 ENOENT |
+| `.env` 引号 | 写成 `RG_PROXY_API_BASE="https://..."` 时，`tools/_api_server.py` 的 `_strip_quotes()` 会剥掉成对引号；不剥则值带引号进 httpx，URL scheme 变成 `https"` → **`UnsupportedProtocol` → 502 UPSTREAM_ERROR**，且 URL repr 看起来完全正常，极难定位 |
+| `tools/test_proxy.py` | 自带 gradio 打桩与代理关闭，本地未装 gradio、本机有 `http_proxy` 都能直接跑 |
+
+> **Linux 沙盒跑 e2e 的浏览器依赖**：headless Chromium 还需要少量系统库
+> （`libnspr4`、`libnss3`、`libasound2t64` 等）。有 root 时一行装好：
+> ```bash
+> npx playwright install --with-deps chromium    # 让 playwright 自己装依赖
+> ```
+> 无 root（容器/沙盒）时把依赖库解到本地目录，用 `LD_LIBRARY_PATH` 指过去即可：
+> ```bash
+> apt-get download libnspr4 libnss3 libasound2t64   # 只下载 .deb，不需要 sudo
+> mkdir -p /tmp/libs && for d in ./*.deb; do dpkg-deb -x "$d" /tmp/libs; done
+> LD_LIBRARY_PATH=/tmp/libs/usr/lib/x86_64-linux-gnu \
+>   node tools/e2e-real.mjs http://127.0.0.1:8092
+> ```
 
 ## 🎨 画面与风格
 
@@ -265,8 +290,16 @@ node tools/ai-test.mjs --e2e           # 只跑真实浏览器端到端
 
 | 字段 | 填法 | 说明 |
 |---|---|---|
-| **免费通道代理基址** | `https://your-api.onrender.com` | 只填根地址，**不带** `/api` 路径 |
+| **免费通道代理基址** | `https://your-api.onrender.com` | 只填根地址（`scheme://host[:port]`）：不带 `/api` 路径、不带查询参数、不带 `#片段`、不带账号密码 |
 | **AI 接口来源** | 🎁 免费内置 | 前端会跨域请求上面的基址 |
 
-服务端需开启 CORS，`app.py` 已内置：设 `CORS_ALLOWED_ORIGINS=https://xxx.github.io`
-限定来源，留空则任意 Origin（仅建议本地开发用）。代理仍只计数额、不记录对话内容。
+服务端需开启 CORS，`app.py` 已内置，由 `CORS_ALLOWED_ORIGINS` 控制：
+
+| 配置 | 行为 |
+|---|---|
+| **留空（默认）** | 只允许同源；跨域一律拒绝（fail-closed） |
+| `https://xxx.github.io` | 只放行该来源（分域部署的标准填法，多个用逗号分隔） |
+| `*` | 任意来源可跨域调用——**仅限本地调试**，会占用共享日额度 |
+
+同域部署（创空间）无需任何 CORS 配置：浏览器不发 `Origin`，中间件直接放行。
+CORS 拦不住非浏览器客户端，不能替代鉴权。代理仍只计数额、不记录对话内容。

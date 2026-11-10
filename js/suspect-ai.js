@@ -355,6 +355,19 @@ export async function askSuspect(s, st, question, knownEvidences, ctx = {}) {
     result = reply;
   } catch (err) {
     lastErr = err;
+    // 流式偶发「思维链占满预算 → content 为空」(EMPTY) 或半路断流，
+    // 此时流式增量已经写出一部分，不能简单重放；改用非流式拿完整结果兜底。
+    if (ctx.onStream && (err && (err.code === 'EMPTY' || err.code === 'NETWORK'))) {
+      try {
+        result = await chatCompletion(
+          [{ role: 'system', content: sys }, ...st.history],
+          { temperature: 0.85, maxTokens: NPC_MAX_TOKENS },
+        );
+        lastErr = null;
+      } catch (err2) {
+        lastErr = err2;
+      }
+    }
   }
 
   if (result === null) {

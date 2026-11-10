@@ -2244,7 +2244,9 @@ function initSettings() {
       return;
     }
 
-    // v3.5 · 端点与白名单校验（不合格不落盘，避免把 Token 发往非法地址）
+    // ── 阶段一：全部校验。任何一项失败都只报错返回，绝不写任何存储 ──
+    // 顺序很重要：以前把"校验"和"落盘"交织在一起，端点已写进 localStorage
+    // 之后才发现代理基址不合法 → 这次"保存失败"却把 Token 下次请求发往新端点。
     const epVal = epInput ? epInput.value.trim() : '';
     if (epVal) {
       const check = validateEndpointUrl(epVal);
@@ -2253,23 +2255,26 @@ function initSettings() {
         st.textContent = `✗ 端点未保存：${check.message}`;
         return;
       }
-      setEndpointUrl(epVal);
-    } else {
-      setEndpointUrl('');
     }
-    if (wlInput) setEndpointWhitelist(wlInput.value);
 
-    // v3.6 · 代理基址校验（不合格不落盘，避免把请求发往非预期后端）
-    const proxyChanged = pbInput ? pbInput.value.trim() !== getProxyBase() : false;
-    if (pbInput) {
-      const check = validateProxyBase(pbInput.value);
+    // v3.6 · 代理基址校验（同样必须在校验段，避免部分落盘）
+    const proxyRaw = pbInput ? pbInput.value.trim() : '';
+    if (proxyRaw) {
+      const check = validateProxyBase(proxyRaw);
       if (!check.ok) {
         st.className = 'err';
         st.textContent = `✗ 代理基址未保存：${check.message}`;
         return;
       }
-      setProxyBase(pbInput.value);
     }
+
+    // ── 阶段二：全部通过，才统一落盘 ──
+    // 代理基址归一为 origin 后再存，保证 proxyUrl() 拼接不会落入 path/query/hash
+    const prevProxy = getProxyBase();
+    if (epVal) setEndpointUrl(epVal); else setEndpointUrl('');
+    if (wlInput) setEndpointWhitelist(wlInput.value);
+    if (pbInput) setProxyBase(proxyRaw);
+    const proxyChanged = pbInput ? getProxyBase() !== prevProxy : false;
 
     const mode = modeEnc && modeEnc.checked ? STORAGE_MODE.ENCRYPTED : STORAGE_MODE.MEMORY;
     await aiSettings.setToken(rawToken, mode);

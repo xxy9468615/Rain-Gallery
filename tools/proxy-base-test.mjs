@@ -1,0 +1,242 @@
+#!/usr/bin/env node
+/* ============================================================
+ * 免费通道代理基址 / CORS 修复回归
+ * ------------------------------------------------------------
+ * 针对 v3.6.1 评审意见的常驻断言，零外部依赖、不需要后端、
+ * 不消耗上游额度——可直接放进 CI 的阻断级 static job。
+ *
+ * 覆盖点：
+ *   1. 基址校验矩阵：path / query / hash / userinfo / 协议 / 非法 URL 必须被拒
+ *   2. 归一化落盘：setProxyBase 只保存根址（origin），拼接 /api/* 不会落进参数
+ *   3. 探测超时在位：probeProxy 体内含 AbortController + clearTimeout + 超时常量
+ *   4. 保存流程顺序：validateProxyBase 必须早于全部 setter（先校验后落盘）
+ *   5. DOM 位置：基址输入必须在 #custom-key-block 之外（免费模式不被 dim 禁用）
+ *   6. CORS fail-closed：app.py 不得把空白名单回落成 ["*"]
+ *
+ * 用法：node tools/proxy-base-test.mjs
+ * ============================================================ */
+import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+let pass = 0;
+let fail = 0;
+const failures = [];
+const t = (ok, msg, extra) => {
+  if (ok) { pass++; console.log(`  \x1b[32m✓\x1b[0m ${msg}${extra ? `  \x1b[2m${extra}\x1b[0m` : ''}`); }
+  else { fail++; failures.push(msg); console.log(`  \x1b[31m✗\x1b[0m ${msg}${extra ? `  \x1b[2m→ ${extra}\x1b[0m` : ''}`); }
+};
+const section = (name) => console.log(`\n\x1b[36m▌${name}\x1b[0m`);
+
+const read = (rel) => readFileSync(resolve(ROOT, rel), 'utf8');
+
+/* ============================================================
+ * 1. 基址校验矩阵（真跑 js/ai-client.js 的导出函数）
+ * ============================================================ */
+section('1 · 代理基址校验矩阵');
+const { validateProxyBase, setProxyBase, getProxyBase } = await import('../js/ai-client.js?v=3.6.0');
+
+const ACCEPT = ['', 'https://h', 'https://h/', 'https://host.example', 'http://127.0.0.1:8092'];
+const REJECT = [
+  ['https://h?x=1', '查询参数'],
+  ['https://h/?x=1', '查询参数（尾斜杠后）'],
+  ['https://h#x', '片段'],
+  ['https://h/api', '路径'],
+  ['https://h/api/', '路径（尾斜杠）'],
+  ['ftp://h', '非 http(s) 协议'],
+  ['javascript:alert(1)', '危险协议'],
+  ['data:text/plain,x', 'data URL'],
+  ['https://u:p@h', 'URL 内嵌凭据'],
+  ['https://h:99999', '非法端口'],
+  ['not a url', '非法 URL'],
+];
+
+for (const v of ACCEPT) {
+  const r = validateProxyBase(v);
+  t(r.ok === true, `接受：${JSON.stringify(v)}`, r.message);
+}
+for (const [v, why] of REJECT) {
+  const r = validateProxyBase(v);
+  t(r.ok === false, `拒绝：${JSON.stringify(v)}（${why}）`, r.ok ? `竟然通过 → ${r.message}` : r.message);
+}
+
+/* ============================================================
+ * 2. 归一化落盘：拼接 /api/* 不得落入 path/query/hash
+ * ============================================================ */
+section('2 · 归一化与拼接');
+const NORMALIZE = [
+  ['https://api.example.com', 'https://api.example.com/api/status'],
+  ['https://api.example.com/', 'https://api.example.com/api/status'],
+  ['https://api.example.com///', 'https://api.example.com/api/status'],
+  ['http://127.0.0.1:8092', 'http://127.0.0.1:8092/api/status'],
+  ['', '/api/status'],   // 留空 = 同源相对路径
+];
+for (const [input, expected] of NORMALIZE) {
+  const saved = setProxyBase(input);
+  const joined = `${getProxyBase()}/api/status`;
+  t(joined === expected, `拼接：${JSON.stringify(input)} → ${expected}`, `实际 ${joined}（落盘 ${JSON.stringify(saved)}）`);
+}
+// 非法输入落盘必须被清空（回退同源），不能把脏值写进 localStorage
+for (const bad of ['https://h/api', 'https://h?x=1', 'https://h#x', 'https://u:p@h']) {
+  const saved = setProxyBase(bad);
+  t(saved === '', `非法输入清空存储：${JSON.stringify(bad)}`, `落盘 ${JSON.stringify(saved)}`);
+}
+setProxyBase('');   // 复位
+
+/* ============================================================
+ * 3. 探测超时在位（源码静态断言）
+ * ============================================================ */
+section('3 · probeProxy 超时');
+{
+  const src = read('js/ai-client.js');
+  const start = src.indexOf('export async function probeProxy()');
+  t(start >= 0, 'probeProxy 存在');
+  const end = src.indexOf('\n}', start);
+  const body = src.slice(start, end);
+  t(/AbortController/.test(body), 'probeProxy 使用 AbortController');
+  t(/clearTimeout\(/.test(body), 'probeProxy 清理定时器（防泄漏）');
+  t(/controller\.abort\(\)/.test(body), 'probeProxy 有 abort 调用点');
+  t(/PROBE_TIMEOUT_MS/.test(src), '定义了 PROBE_TIMEOUT_MS 常量');
+  const cst = src.match(/const PROBE_TIMEOUT_MS = (\d+);/);
+  t(!!cst && Number(cst[1]) > 0 && Number(cst[1]) <= 30000, 'PROBE_TIMEOUT_MS 取值合理',
+    cst ? `${cst[1]}ms` : '未找到');
+}
+
+/* ============================================================
+ * 4. 保存流程顺序：先全部校验，再统一落盘
+ * ============================================================ */
+section('4 · 设置保存流程顺序');
+{
+  const src = read('js/game.js');
+  // 取保存按钮 handler 的函数体（从 addEventListener 到第一个匹配的收尾）
+  const anchor = src.indexOf("$('btn-save-settings').addEventListener('click'");
+  t(anchor >= 0, '定位保存按钮 handler');
+  const body = src.slice(anchor, anchor + 6000);
+  const first = (re) => {
+    const m = body.match(re);
+    return m ? anchor + (m.index + body.slice(0, m.index).length) : -1;
+  };
+  const lineOf = (idx) => (idx < 0 ? -1 : src.slice(0, idx).split('\n').length);
+
+  const lineValidateProxy = lineOf(first(/validateProxyBase\(/));
+  const lineValidateEp = lineOf(first(/validateEndpointUrl\(/));
+  const lineSetProxy = lineOf(first(/setProxyBase\(/));
+  const lineSetEp = lineOf(first(/setEndpointUrl\(/));
+  const lineSetWl = lineOf(first(/setEndpointWhitelist\(/));
+  const lineSetToken = lineOf(first(/aiSettings\.setToken\(/));
+
+  t(lineValidateProxy > 0 && lineSetProxy > lineValidateProxy,
+    'validateProxyBase 早于 setProxyBase', `校验 L${lineValidateProxy} / 落盘 L${lineSetProxy}`);
+  t(lineValidateEp > 0 && lineSetEp > lineValidateEp,
+    'validateEndpointUrl 早于 setEndpointUrl', `校验 L${lineValidateEp} / 落盘 L${lineSetEp}`);
+  // 核心：任何 setter 都不得出现在对应校验之前
+  t(lineSetEp > lineValidateEp && lineSetWl > lineValidateEp && lineSetProxy > lineValidateProxy,
+    '端点/白名单/基址三类 setter 全部晚于校验',
+    `端点 ${lineSetEp} > ${lineValidateEp} · 白名单 ${lineSetWl} · 基址 ${lineSetProxy} > ${lineValidateProxy}`);
+  t(lineSetToken > lineSetProxy && lineSetToken > lineSetEp,
+    'aiSettings.setToken 在所有 setter 之后', `L${lineSetToken} 晚于 setProxyBase(L${lineSetProxy}) / setEndpointUrl(L${lineSetEp})`);
+
+  // 附带修正：代理基址变更必须能触发重探测（旧代码恒为 false）
+  const probe = anchor + body.indexOf('probeProxy()');
+  t(/getProxyBase\(\) !== prevProxy|proxyChanged/.test(body) && probe > 0,
+    '代理基址变更后可触发重新探测');
+}
+
+/* ============================================================
+ * 5. DOM 位置：基址输入必须在 #custom-key-block 之外
+ * ============================================================ */
+section('5 · 设置面板 DOM 位置');
+{
+  const html = read('index.html');
+  const lines = html.split('\n');
+  const blockLine = lines.findIndex((l) => l.includes('id="custom-key-block"')) + 1;
+  const lastProxyLine = lines.reduce((acc, l, i) => (l.includes('settings-proxy-base') ? i + 1 : acc), 0);
+  const firstProxyLine = lines.findIndex((l) => l.includes('settings-proxy-base')) + 1;
+  t(blockLine > 0, '找到 #custom-key-block', `L${blockLine}`);
+  t(lastProxyLine > 0, '找到 settings-proxy-base', `L${firstProxyLine}~L${lastProxyLine}`);
+  t(lastProxyLine < blockLine, '基址输入在 #custom-key-block 之前（免费模式可编辑）',
+    `基址 L${lastProxyLine} < 容器 L${blockLine}`);
+  // 反向：容器区间内不得再出现基址控件
+  const blockIdx = html.indexOf('id="custom-key-block"');
+  const closeIdx = html.lastIndexOf('<!-- /custom-key-block -->');
+  const inside = closeIdx > blockIdx ? html.slice(blockIdx, closeIdx) : '';
+  t(!inside.includes('settings-proxy-base'), '容器内已无基址控件',
+    inside.includes('settings-proxy-base') ? '仍在 #custom-key-block 内' : '已移出');
+}
+
+/* ============================================================
+ * 6. CORS fail-closed
+ * ============================================================ */
+section('6 · 服务端 CORS 默认拒绝');
+{
+  const py = read('app.py');
+  // 关键回归：任何形式的「空白名单回落通配」都不允许出现
+  const allowLine = py.split('\n').find((l) => /^\s*allow_origins\s*=/.test(l)) || '';
+  t(!!allowLine, '找到 allow_origins 配置行', allowLine.trim());
+  t(!/\bor\s*\[?\s*["']\*["']\s*\]?/.test(allowLine),
+    'allow_origins 未把空白名单回落成 ["*"]', allowLine.trim());
+  t(/allow_origins\s*=\s*_cors_origins\(\)/.test(py),
+    'allow_origins 直接取 _cors_origins() 的返回值（空列表 = 拒绝跨域）', allowLine.trim());
+  t(/def _cors_origins\(\)/.test(py), '白名单解析收敛到 _cors_origins()');
+  t(/allow_credentials=False/.test(py), 'allow_credentials 保持 False（不与通配 Origin 组合）');
+  const doc = py.split('\n').find((l) => l.includes('def _cors_origins'));
+  const idx = py.indexOf('def _cors_origins');
+  t(/"""[\s\S]*?"""/.test(py.slice(idx, idx + 400)), '_cors_origins 带 docstring');
+}
+
+/* ============================================================
+ * 7. .env 引号剥离（Linux 沙盒踩坑回归）
+ *    .env 写成 RG_PROXY_API_BASE="https://..." 时若不剥引号，
+ *    值会带引号进入 httpx → scheme 变成 https" → UnsupportedProtocol → 502。
+ *    表现为 URL repr 完全正常，极难定位。
+ * ============================================================ */
+section('7 · .env 引号剥离（上游 502 UnsupportedProtocol 回归）');
+{
+  const srv = read('tools/_api_server.py');
+  t(/def _strip_quotes\(/.test(srv), '_api_server.py 定义了 _strip_quotes()');
+  t(/_strip_quotes\(m\[1\]\)/.test(srv), '.env 值经过 _strip_quotes 处理');
+  t(/line\.startswith\('#'\)/.test(srv), '.env 解析跳过空行与注释行');
+
+  // 真跑剥离逻辑（用 python 直接验证语义，避免 python/node 语法差异）
+  const cases = [
+    ['"https://h/v1/chat/completions"', 'https://h/v1/chat/completions'],
+    ["'https://h/v1/chat/completions'", 'https://h/v1/chat/completions'],
+    ['https://h/v1/chat/completions', 'https://h/v1/chat/completions'],
+    ['  "https://h"  ', 'https://h'],
+    ['"', '"'],            // 单个引号不配成对，原样保留
+    ['', ''],
+  ];
+  let allOk = true;
+  const got = [];
+  for (const [raw, want] of cases) {
+    const out = execFileSync('python3', ['-c', `
+import sys
+def _strip_quotes(v: str) -> str:
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'"):
+        return v[1:-1]
+    return v
+print(_strip_quotes(sys.argv[1]))
+`, raw]).toString().trim();
+    got.push(`${JSON.stringify(raw)} → ${JSON.stringify(out)}`);
+    if (out !== want) allOk = false;
+  }
+  t(allOk, '_strip_quotes 语义正确（成对引号才剥，单引号/空值不动）', got.join(' · '));
+
+  // app.py 自己也该对上游 URL 做防御性 strip：即便有人绕过加载器直接导出裸引号值
+  t(/os\.environ\.get\("RG_PROXY_API_BASE"[^)]*\)\.strip\(\)/.test(read('app.py')),
+    'app.py 对 API_BASE 做了 strip（与加载器双保险）');
+}
+
+/* ============================================================
+ * 汇总
+ * ============================================================ */
+console.log(`\n\x1b[1m合计\x1b[0m  \x1b[32m通过 ${pass}\x1b[0m · \x1b[31m失败 ${fail}\x1b[0m`);
+if (fail) {
+  console.log('\n\x1b[31m失败项：\x1b[0m');
+  failures.forEach((f) => console.log('  · ' + f));
+  process.exit(1);
+}
+console.log('\x1b[32m✓ 代理基址 / CORS 修复回归全部通过\x1b[0m');

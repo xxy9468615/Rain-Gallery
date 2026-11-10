@@ -60,14 +60,29 @@ export function getProxyBase() {
   return v;
 }
 
+/** 归一化为可直接拼接 /api/* 的根址（origin）。非法输入返回 ''（同源回退）。 */
+export function normalizeProxyBase(url) {
+  const check = validateProxyBase(url);
+  return check.ok ? (check.origin || '') : '';
+}
+
 export function setProxyBase(url) {
-  const clean = String(url || '').trim().replace(/\/+$/, '');
+  const clean = normalizeProxyBase(url);
   if (!clean) { storage.removeItem(LS_PROXY_BASE); return ''; }
   storage.setItem(LS_PROXY_BASE, clean);
   return clean;
 }
 
-/** 校验代理基址：绝对 URL + http(s) + 不含凭据 */
+/**
+ * 校验代理基址：绝对 URL + http(s) + 不含凭据 + 纯根址
+ * ------------------------------------------------------------
+ * 只接受「根地址」——即 scheme://host[:port]，不得带：
+ *   - 路径        （https://host/api  →  /api/chat 会被拼成 /api/api/chat）
+ *   - 查询参数    （https://host?x=1  →  /api/chat 落进 ? 后面）
+ *   - 片段        （https://host#x    →  浏览器根本不会把它发出去）
+ *   - userinfo    （https://u:p@host → 可能被 SDK / 代理当作凭据使用）
+ * 合法时返回归一化后的 origin 供落盘，拼接 proxyUrl(path) 才不会出意外。
+ */
 export function validateProxyBase(url) {
   const raw = String(url || '').trim().replace(/\/+$/, '');
   if (!raw) return { ok: true, message: '同源（默认）' };
@@ -80,6 +95,12 @@ export function validateProxyBase(url) {
   }
   if (u.username || u.password) {
     return { ok: false, message: 'URL 中不能包含账号密码' };
+  }
+  if (u.search) {
+    return { ok: false, message: '只填基址（如 https://host），不要带查询参数' };
+  }
+  if (u.hash) {
+    return { ok: false, message: '只填基址（如 https://host），不要带片段（#…）' };
   }
   if (u.pathname && u.pathname !== '/') {
     return { ok: false, message: '只填基址（如 https://host），不要带路径' };
@@ -95,6 +116,9 @@ const proxyUrl = (path) => {
 const PROXY_CHAT_PATH = '/api/chat';
 const PROXY_JUDGE_PATH = '/api/judge';
 const PROXY_STATUS_PATH = '/api/status';
+
+/** /api/status 探测超时：探测失败不得卡住 boot() 之后的初始化 */
+const PROBE_TIMEOUT_MS = 8000;
 
 /** 当前自定义端点（带容错读取与归一化） */
 export function getEndpointUrl() {
@@ -456,7 +480,15 @@ export function rotateSessionId() {
   return getSessionId();
 }
 
-/** 探测同源免费通道（file:// / 纯静态托管下不可用，自动置灰） */
+/**
+ * 探测免费通道（file:// / 纯静态托管 / 后端不可达时置灰）
+ * ------------------------------------------------------------
+ * 必须带超时：boot() 的顺序是「await 探测 → bindEvents()/initSettings()」，
+ * 若填了独立后端基址而该后端把 /api/status 挂住不返回，页面会一直停在探测前——
+ * 玩家连设置面板都打不开，也就没机会改回基址。因此 fetch 与 resp.json 都套
+ * AbortController 超时，超时后走下面既有的失败分支（available=false），
+ * 启动流程继续执行。
+ */
 export async function probeProxy() {
   if (MOCK_AI) { // mock 模式视同免费通道可用，便于全链路测试
     proxyState.available = true;
@@ -464,8 +496,13 @@ export async function probeProxy() {
     proxyState.checked = true;
     return { ...proxyState };
   }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
   try {
-    const resp = await fetch(proxyUrl(PROXY_STATUS_PATH), { headers: { 'X-Session-Id': getSessionId() } });
+    const resp = await fetch(proxyUrl(PROXY_STATUS_PATH), {
+      headers: { 'X-Session-Id': getSessionId() },
+      signal: controller.signal,
+    });
     if (!resp.ok) throw new Error(String(resp.status));
     const data = await resp.json();
     proxyState.available = !!data.available;
@@ -473,9 +510,12 @@ export async function probeProxy() {
     proxyState.sessionCap = data.sessionCap || 150;
     proxyState.sessionUsed = data.sessionUsed || 0;
   } catch (e) {
+    // AbortError（超时）与网络错误同等对待：置灰，交由 requireAI 引导玩家去设置
     proxyState.available = false;
+  } finally {
+    clearTimeout(timer);
+    proxyState.checked = true;
   }
-  proxyState.checked = true;
   return { ...proxyState };
 }
 

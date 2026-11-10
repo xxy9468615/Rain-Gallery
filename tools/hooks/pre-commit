@@ -5,10 +5,10 @@
 # 由 core.hooksPath 指向本目录生效：
 #   git config core.hooksPath tools/hooks
 #
-# 校验内容（tools/check-syntax.mjs）：
-#   1. 全模块 ES Module 语法
-#   2. 跨模块 import 引用（防运行期 ReferenceError）
-#   3. 块注释配对（防 JSDoc 漏闭合把函数注释掉）
+# 校验内容：
+#   1. tools/check-syntax.mjs —— 全模块语法 / 跨模块 import / 块注释配对
+#   2. tools/proxy-base-test.mjs —— 代理基址 / CORS / .env 引号 / DOM 位置回归
+#      （与 CI 的 static job 完全一致，避免「本地过了 CI 挂」；零外部依赖、不需后端）
 #
 # 临时跳过：git commit --no-verify
 # ============================================================
@@ -31,11 +31,23 @@ if ! node tools/check-syntax.mjs; then
   exit 1
 fi
 
+# ---- 代理基址 / CORS / .env 引号回归（与 CI static job 一致）----
+echo "[pre-commit] 运行回归校验 tools/proxy-base-test.mjs …"
+if ! node tools/proxy-base-test.mjs; then
+  echo ""
+  echo "[pre-commit] ✗ 回归校验未通过，已阻止本次提交。"
+  echo "             常见原因：改了 validateProxyBase / probeProxy / 设置保存流程"
+  echo "             顺序、动了 CORS 配置或 .env 加载逻辑。请按上面失败项修复。"
+  exit 1
+fi
+
 # ---- 大模型模拟生产测试（可选，失败不阻断提交） ----
 # 需要：后端已启动（默认 127.0.0.1:8092）+ .env 配置 + 本机 Chrome。
 # 未满足条件时只提示，避免本地无服务时阻塞提交。
+# --noproxy '*'：本机若设了 http_proxy，curl 会把 127.0.0.1 也劫到代理上，
+# 明明后端在跑却探不到（此前实测踩过）。
 if [ -f ".env" ]; then
-  if curl -fsS -m 3 http://127.0.0.1:8092/api/status >/dev/null 2>&1; then
+  if curl -fsS -m 3 --noproxy '*' http://127.0.0.1:8092/api/status >/dev/null 2>&1; then
     echo "[pre-commit] 运行大模型契约测试 tools/contract-test.mjs …"
     if node tools/contract-test.mjs; then
       echo "[pre-commit] ✓ 契约测试通过"
@@ -44,7 +56,8 @@ if [ -f ".env" ]; then
     fi
   else
     echo "[pre-commit] ⚠ 后端未启动（127.0.0.1:8092），跳过契约测试"
-    echo "             启动命令：.venv-test/Scripts/python.exe tools/_api_server.py"
+    echo "             启动命令：bash tools/dev-server.sh 8092"
+    echo "            或 python3 tools/_api_server.py --port 8092（需 fastapi/uvicorn/httpx）"
   fi
 else
   echo "[pre-commit] ⚠ 无 .env，跳过大模型测试"
