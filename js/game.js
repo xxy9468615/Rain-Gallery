@@ -2194,6 +2194,27 @@ function initSettings() {
     sel.appendChild(custom); sel.value = current;
   } else sel.value = current;
 
+  /* v3.7 · 模型 ID 输入框 + 测试按钮 */
+  const modelInput = $('settings-model-id');
+  const testModelBtn = $('btn-test-model');
+  if (modelInput) {
+    // 同步当前模型：白名单内的也填进去，省得玩家想微调时还要先切到自定义
+    modelInput.value = current;
+    const syncCustomState = () => {
+      const isCustom = sel.value === '__custom__';
+      modelInput.classList.toggle('is-custom', isCustom);
+      if (isCustom && !modelInput.value) modelInput.focus();
+    };
+    syncCustomState();
+    sel.addEventListener('change', () => {
+      syncCustomState();
+      // 切到白名单项时同步输入框，避免「下拉显示 X、输入框留着 Y」的割裂
+      if (sel.value !== '__custom__') modelInput.value = sel.value;
+    });
+  }
+  // 免费通道模型展示：让玩家知道免费通道实际在打哪个模型
+  showFreeChannelModel();
+
   // 存储模式单选同步
   const curMode = aiSettings.getStorageMode();
   const modeMem = $('mode-memory');
@@ -2340,14 +2361,27 @@ function initSettings() {
     const mode = modeEnc && modeEnc.checked ? STORAGE_MODE.ENCRYPTED : STORAGE_MODE.MEMORY;
     await aiSettings.setToken(rawToken, mode);
 
+    // v3.7 · 模型 ID：优先取输入框（取代原先的 gamePrompt 弹窗）。
+    // 存什么读什么，白名单不再作为过滤条件——玩家手填的 glm-4-plus 之类
+    // 以前每次都被重置回默认值，等于"换了模型但没换"。
     let model = sel.value;
-    if (model === '__custom__') {
-      model = (await gamePrompt('输入模型 ID（如 Qwen/Qwen3-8b）：', {
-        title: '自定义模型 ID',
-        placeholder: 'Qwen/Qwen3-8b',
-      })) || aiSettings.getModel();
+    const typed = $('settings-model-id');
+    if (model === '__custom__' || (typed && typed.value.trim())) {
+      const typedVal = (typed && typed.value.trim()) || '';
+      if (typedVal) {
+        model = typedVal;
+      } else if (sel.value !== '__custom__') {
+        model = sel.value;
+      } else {
+        // 选了「自定义」却没填任何值 → 保留当前模型，不让配置变空
+        model = aiSettings.getModel();
+        st.className = 'err';
+        st.textContent = '✗ 选择了「自定义模型」但没填 ID——请填入模型 ID，或改选列表中的模型';
+        return;
+      }
     }
     aiSettings.setModel(model);
+    if (modelInput) modelInput.value = model;
 
     updateAIBadge();
     updateIntroAICard();
@@ -2377,6 +2411,44 @@ function initSettings() {
     }
     save();
   });
+
+  /* v3.7 · 「测试该模型」：用输入框里的模型 ID 发一次最小请求。
+   * 只测不存——玩家可能只是想看看某个 ID 能不能用，未必想切过去。
+   * 免费通道模式下模型由服务端强制，这里给出明确说明，不让玩家误判。 */
+  if (testModelBtn && modelInput) {
+    testModelBtn.addEventListener('click', async () => {
+      const id = modelInput.value.trim();
+      const st = $('settings-status');
+      if (!id) {
+        st.className = 'err';
+        st.textContent = '✗ 先填入要测试的模型 ID';
+        return;
+      }
+      const customMode = getEndpointMode() === ENDPOINT_MODE.CUSTOM;
+      if (!customMode || !aiSettings.hasToken()) {
+        st.className = 'err';
+        st.textContent = '✗ 测试模型需要「自定义」模式且已填 Token（免费通道的模型由服务端决定，前端不可选）';
+        return;
+      }
+      st.className = 'ok';
+      st.textContent = `⏳ 正在用 ${id} 测试…`;
+      const prev = aiSettings.getModel();
+      aiSettings.setModel(id);
+      try {
+        const r = await testConnection(aiSettings.getToken(), id);
+        st.className = r.ok ? 'ok' : 'err';
+        st.textContent = r.ok
+          ? `✓ ${id} 可用（${r.ms}ms）`
+          : `✗ ${id} 不可用：${r.message || '请求失败'}`;
+      } catch (e) {
+        st.className = 'err';
+        st.textContent = `✗ 测试失败：${(e && e.message) || '未知错误'}`;
+      } finally {
+        aiSettings.setModel(prev);   // 只测不改，恢复原模型
+        updateAIBadge();
+      }
+    });
+  }
 
   // 销毁 Token（游戏内确认弹窗 · 0 保留确认）
   const clearBtn = $('btn-clear-settings');
@@ -2422,7 +2494,9 @@ function initSettings() {
     if (!token) { st.className = 'err'; st.textContent = '✗ 请先填写 Token'; return; }
     st.className = ''; st.textContent = '⏳ 正在向魔搭官方端点测试推理…';
     try {
-      const model = sel.value === '__custom__' ? aiSettings.getModel() : sel.value;
+      // v3.7 · 模型取值：输入框优先（里面通常就是玩家想测的那个），否则下拉/当前模型
+      const typedModel = ($('settings-model-id') && $('settings-model-id').value.trim()) || '';
+      const model = typedModel || (sel.value === '__custom__' ? aiSettings.getModel() : sel.value);
       const { reply, latency } = await testConnection(token, model);
       st.className = 'ok';
       st.textContent = `✓ 连通成功！延迟 ${latency}ms（回复：${reply.slice(0, 20)}）`;
@@ -2431,6 +2505,33 @@ function initSettings() {
       st.textContent = `✗ ${err.message || err.code || '连接失败'}`;
     }
   });
+}
+
+/**
+ * v3.7 · 在模型 ID 输入框旁显示免费通道实际在用的模型。
+ * 免费通道的模型由服务端 _forward 强制（前端传什么都不作数），
+ * 所以必须明示——否则玩家看到下拉里默认的 Qwen3.8-Flash，
+ * 以为在用那个，实际打的是 spark-x2.6。
+ */
+function showFreeChannelModel() {
+  const note = $('free-model-note');
+  if (!note) return;
+  note.classList.remove('hidden');
+  const current = getEndpointMode();
+  if (current === ENDPOINT_MODE.CUSTOM && aiSettings.hasToken()) {
+    note.textContent = '当前为自定义 Key 模式，上方模型 ID 完全由你决定。';
+    note.className = '';
+    return;
+  }
+  const m = proxyState.model || '';
+  if (proxyState.checked && proxyState.available && m) {
+    note.textContent = `（免费通道当前实际使用：${m}——由服务端决定，前端不可选；填了自定义 Key 后才可自行指定。）`;
+  } else if (proxyState.checked) {
+    note.textContent = '（免费通道暂不可用；下方自定义 Key 模式可自行指定模型。）';
+  } else {
+    note.textContent = '（免费通道探测中……）';
+  }
+  note.className = 'free-model-note';
 }
 
 function initVisualizerAndAudioControls() {

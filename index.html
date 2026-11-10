@@ -352,6 +352,21 @@
         <label class="field-label" for="settings-model">扮演模型</label>
         <select id="settings-model" class="text-input"></select>
 
+        <!-- v3.7 · 自定义模型 ID：选「…」后在此手填。
+             此前只认下拉白名单内的 ID，玩家手填的（如 glm-4-plus）每次都被
+             静默重置回默认值——以为换了模型，实际一直在打默认模型。 -->
+        <label class="field-label" for="settings-model-id" style="margin-top:10px;">自定义模型 ID（选「自定义模型 ID…」后填写）</label>
+        <div class="token-input-row">
+          <input id="settings-model-id" type="text" class="text-input"
+            placeholder="如 Qwen/Qwen3.8-Flash-Next、glm-4-plus、deepseek-ai/DeepSeek-V3.1"
+            autocomplete="off" spellcheck="false" aria-describedby="model-id-hint">
+          <button id="btn-test-model" class="chip-btn" type="button" title="用该模型发一次最小请求，验证是否可用">🔍 测试该模型</button>
+        </div>
+        <p class="hint-line" id="model-id-hint" style="text-align:left;margin:6px 0 0;">
+          填任意魔搭 API-Inference 上架中的模型 ID（存什么读什么，不再被白名单重置）。
+          <span id="free-model-note" class="hidden"></span>
+        </p>
+
         <details class="settings-help">
           <summary>如何免费获取 Token？（30 秒开通）</summary>
           <ol>
