@@ -23,6 +23,9 @@ import {
 import {
   buildProfile, aiProfileReport, radarSVG,
 } from './profiler.js?v=3.6.0';
+import {
+  requestHint, hintPenalty, hintsLeft, HINT_LIMIT, fallbackHint,
+} from './hint.js?v=3.6.0';
 
 const $ = (id) => document.getElementById(id);
 const SAVE_KEY = 'rain-gallery-save';
@@ -74,6 +77,7 @@ function defaultStats() {
     presentsUnique: 0,       // 出示的不同物证种数
     presentedIds: [],        // 已出示过的物证 id
     evidenceOrder: [],       // 物证发现顺序
+    hintsUsed: 0,            // 求助次数（一局 3 次；computeScore 按次扣分）
   };
 }
 
@@ -1290,6 +1294,7 @@ function renderNotebook() {
  * ============================================================ */
 
 const suspectById = (id) => CASE.suspects.find((s) => s.id === id);
+const evidenceById = (id) => CASE.evidences.find((e) => e.id === id);
 const MOOD_TEXT = { calm: '🛡 镇定', shaken: '🌀 动摇', broken: '💥 防线崩溃' };
 
 /* ---------- v3.0 · 三维关系数值条（卡片 + 审讯头部实时可见） ----------
@@ -1509,35 +1514,83 @@ function hideTyping() {
 let busy = false;
 let lastQuestion = '';
 
-/* ---------- v3.0 · 建议提问气泡（按嫌疑人/已收集证据/未触发破绽动态筛选） ---------- */
+/* ---------- v3.7 · 求助系统（旁白顾问给方向，不给问句） ---------- */
 
+/**
+ * 渲染求助入口。取代原先的「建议提问」chip——
+ * 那套把最优提问原文填进输入框，推理乐趣归零。
+ * 这里只给一个按钮，点开后向 AI 要一个**方向**，
+ * 玩家必须自己把方向翻译成问句。
+ */
 function renderSuggestQuestions() {
   const box = $('suggest-questions');
   if (!box || !state.activeSuspect) return;
+  const used = state.stats ? state.stats.hintsUsed : 0;
+  const left = hintsLeft(used);
+  if (left <= 0) {
+    box.innerHTML = '<span class="sq-label">🧭 求助次数已用完——剩下的，靠你自己了。</span>';
+    return;
+  }
+  box.innerHTML = `<button class="hint-btn" id="btn-hint">🧭 求助（剩 ${left}/${HINT_LIMIT} 次）</button>`
+    + '<span class="sq-label">旁白只点方向，不替你发问；每次求助将在结案评分中扣 2 分。</span>';
+  const btn = $('btn-hint');
+  if (btn) btn.addEventListener('click', onHintRequest);
+}
+
+/** 点击求助：向 AI 要一个方向，以旁白气泡呈现（不自动填输入框） */
+async function onHintRequest() {
+  const btn = $('btn-hint');
+  if (btn) btn.disabled = true;
+  if (state.stats) state.stats.hintsUsed += 1;
+  const used = state.stats ? state.stats.hintsUsed : 1;
+  const box = $('suggest-questions');
+  if (box) box.innerHTML = '<span class="sq-label">⏳ 旁白在观察……</span>';
+
   const s = suspectById(state.activeSuspect);
   const st = state.suspects.get(state.activeSuspect);
-  const pool = (s.suggestQuestions || [])
-    .filter((item) => {
-      if (!item.tag) return true; // 无标签的通用问题恒可用
-      if (st.triggeredKeys.has(item.tag)) return false; // 已点破的隐藏
-      const idx = Number(item.tag.split(':')[1]);
-      const kh = s.keywordHits[idx];
-      if (!kh) return false;
-      return (kh.requires || []).every((r) => state.found.includes(r)); // 前置物证未收集的隐藏
-    });
-  const picks = pool.slice(0, 3);
-  if (!picks.length) { box.innerHTML = ''; return; }
-  box.innerHTML = `<span class="sq-label">💡 建议提问：</span>` + picks.map((p) =>
-    `<button class="suggest-chip" data-q="${p.q.replace(/"/g, '&quot;')}">${p.q}</button>`).join('');
-  box.querySelectorAll('.suggest-chip').forEach((el) => {
-    el.addEventListener('click', () => {
-      audio.click();
-      const input = $('dialog-input');
-      input.value = el.dataset.q;
-      input.focus();
-    });
-  });
+  const known = state.found.map((id) => evidenceById(id)).filter(Boolean);
+  let out;
+  try {
+    out = await requestHint(s, st, known, used);
+  } catch (e) {
+    out = { text: fallbackHint(), source: 'fallback', left: hintsLeft(used) - 1 };
+  }
+  appendHintBubble(out, used);
+  renderSuggestQuestions();
+  // hintsUsed 是评分输入（computeScore 读它算 hintPenalty），
+  // 必须落盘——否则刷新页面后 3 次额度重置，且已扣过的分凭空消失。
+  save();
 }
+
+/** 旁白气泡：独立的视觉样式，与嫌疑人/系统气泡区分开 */
+function appendHintBubble(out, used) {
+  const stream = $('dialog-stream');
+  if (!stream) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'bubble hint';
+  const tag = document.createElement('span');
+  tag.className = 'hint-tag';
+  tag.textContent = '🧭 旁白';
+  const body = document.createElement('span');
+  body.className = 'hint-body';
+  body.textContent = out.text;                      // textContent：旁白内容一律不走 innerHTML
+  const note = document.createElement('span');
+  note.className = 'hint-fallback';
+  note.textContent = out.source === 'fallback' ? '（离线旁白）' : '';
+  wrap.append(tag, body, note);
+  stream.appendChild(wrap);
+  stream.scrollTop = stream.scrollHeight;
+  audio.discover();
+  logDecisionForHint(out, used);
+}
+
+/** 写进 NPC 决策日志（applyRel 的 note 字段），让终幕叙事也能看到求助行为 */
+function logDecisionForHint(out, used) {
+  const st = state.suspects.get(state.activeSuspect);
+  if (!st) return;
+  applyRel(st, 0, 0, `求助旁白（第 ${used} 次，${out.source}）`);
+}
+
 
 async function sendQuestion(isRetry = false) {
   if (busy || !state.activeSuspect) return;
@@ -1807,21 +1860,29 @@ function computeScore(juryCorrect) {
   const investigate = Math.round((state.found.length / CASE.evidences.length) * 12);
   const interrogation = Math.min(12, state.crackCount * 2);
   const evidenceScore = Math.min(36, keyHits * 6);
-  const total = (culpritOk ? 40 : 0) + evidenceScore + investigate + interrogation;
+  // 求助惩罚：每次 -2、封顶 -6。只从总分扣，不推翻单项分——
+  // 玩家即使求助了，前面的实打实进展仍算数。
+  // 纯函数：只读 state.stats.hintsUsed（会落盘），续玩档可重算。
+  const hints = (state.stats && state.stats.hintsUsed) || 0;
+  const hintCut = hintPenalty(hints);
+  const total = Math.max(0, (culpritOk ? 40 : 0) + evidenceScore + investigate + interrogation - hintCut);
   const rank = CASE.scoring.ranks.find((r) => total >= r.min) || CASE.scoring.ranks[CASE.scoring.ranks.length - 1];
-  return { culpritOk, keyHits, evidenceScore, investigate, interrogation, total, rank };
+  return { culpritOk, keyHits, evidenceScore, investigate, interrogation, hintCut, hintsUsed: hints, total, rank };
 }
 
 function renderScore(sc) {
   const box = $('score-box');
   box.classList.remove('hidden');
+  const hintRow = sc.hintCut
+    ? `<div class="score-row score-row-penalty"><span>旁白求助（${sc.hintsUsed} 次）</span><b>-${sc.hintCut}</b></div>`
+    : '';
   box.innerHTML = `
     <div class="score-rank">${sc.rank.label}</div>
     <div class="score-rank-desc">${sc.rank.desc}</div>
     <div class="score-row"><span>凶手指认（${sc.culpritOk ? '✓ 正确' : '✗ 错误'}）</span><b>${sc.culpritOk ? 40 : 0} / 40</b></div>
     <div class="score-row"><span>定罪证据链（命中关键证据 ${sc.keyHits} 条）</span><b>${sc.evidenceScore} / 36</b></div>
     <div class="score-row"><span>现场调查（物证 ${state.found.length}/${CASE.evidences.length}）</span><b>${sc.investigate} / 12</b></div>
-    <div class="score-row"><span>审讯攻防（戳穿 ${state.crackCount} 次）</span><b>${sc.interrogation} / 12</b></div>
+    <div class="score-row"><span>审讯攻防（戳穿 ${state.crackCount} 次）</span><b>${sc.interrogation} / 12</b></div>${hintRow}
     <div class="score-total"><span>综合评分</span><b>${sc.total}</b></div>`;
 }
 

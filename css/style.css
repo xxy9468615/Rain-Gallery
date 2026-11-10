@@ -992,6 +992,25 @@ textarea.text-input { resize: vertical; min-height: 52px; line-height: 1.6; }
 }
 .suggest-chip:hover { color: var(--amber); border-color: var(--amber); background: var(--amber-soft); }
 
+/* ---------- v3.7 · 求助入口与旁白气泡 ---------- */
+/* 求助只给方向不给问句，所以按钮要显眼（鼓励用）但说明要常驻（提示代价） */
+.hint-btn {
+  background: var(--bg-soft); border: 1px solid var(--line); border-radius: 999px;
+  color: var(--amber); font-size: 11.5px; padding: 4px 13px; cursor: pointer;
+  transition: all .15s; font-family: var(--sans); display: inline-flex; align-items: center; gap: 4px;
+}
+.hint-btn:hover { background: var(--amber-soft); border-color: var(--amber); }
+.hint-btn:disabled { opacity: .5; cursor: not-allowed; }
+/* 旁白气泡：虚线边 + 略偏冷的底色，一眼区别于嫌疑人（实线/暖）与系统（无边框） */
+.bubble.hint {
+  border: 1px dashed var(--line); background: var(--bg-soft);
+  font-size: 12.5px; line-height: 1.65; color: var(--ink-dim);
+}
+.hint-tag { color: var(--amber); font-size: 10.5px; margin-right: 6px; }
+.hint-fallback { font-size: 10px; opacity: .6; margin-left: 4px; }
+/* 求助惩罚行：终幕里用暗红标出，让玩家知道分扣在哪 */
+.score-row-penalty b, .score-row-penalty span:last-child { color: #c4937a; }
+
 /* ---------- v3.0 · 免费通道状态与自定义 Key 区 ---------- */
 .free-status { display: block; font-size: 11.5px; margin-top: 3px; }
 .free-status.ok { color: var(--green); }

@@ -108,6 +108,12 @@ export function buildStatsDigest(snap, sc) {
     })
     .map((s) => s.name)
     .join('、') || '无人完整坦白';
+  // 求助痕迹：AI 评估要能评论「玩家在哪个节点卡住了」，
+  // 求助次数是「独立作答能力」最直接的代理指标。
+  const hintsUsed = stats.hintsUsed || 0;
+  const hintLine = hintsUsed > 0
+    ? `求助旁白：${hintsUsed} 次（评分已扣 ${(sc.hintCut != null ? sc.hintCut : 0)} 分）`
+    : '求助旁白：0 次（全程独立作答）';
 
   return [
     `用时：约 ${minutes} 分钟`,
@@ -116,6 +122,7 @@ export function buildStatsDigest(snap, sc) {
     `审讯：总提问 ${snap.askedTotal} 次（${qLine}），戳穿 ${snap.crackCount} 次，${confessions}`,
     `出示物证：${presents}；重复查看已收集物证 ${stats.repeatViews || 0} 次，重复提问 ${stats.repeatQuestions || 0} 次`,
     `指认：${snap.accused ? (CASE.suspects.find((s) => s.id === snap.accused) || {}).name : '（未指认）'}；定罪证据勾选 ${(snap.chosenEvidence || []).length} 条`,
+    hintLine,
     `结算：综合 ${sc.total}/100（指认${sc.culpritOk ? '正确' : '错误'}，关键证据命中 ${sc.keyHits}/${CASE.truth.keyEvidenceIds.length}），评级 ${sc.rank.label}`,
   ].join('\n');
 }

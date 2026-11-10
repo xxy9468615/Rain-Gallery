@@ -235,8 +235,13 @@ if (FULL) {
 section('C · 出站沙箱守卫（源码静态校验）');
 {
   const src = readFileSync(resolve(ROOT, 'js/ai-client.js'), 'utf8');
-  t(src.includes("const REQUIRED_ORIGIN = 'https://api-inference.modelscope.cn'"),
-    'ai-client 定义了 REQUIRED_ORIGIN 白名单');
+  // v3.6 起白名单由玩家在设置里配置（getEndpointWhitelist），不再是硬编码常量；
+  // 守卫的关键性质是「白名单为空时放行、非空时严格执行」+ 协议/userinfo 校验。
+  t(/getEndpointWhitelist\(\);\s*\n\s*if \(whitelist\.length && !whitelist\.includes/.test(src),
+    '出站守卫按用户白名单校验（白名单为空时放行）');
+  t(/u\.protocol !== 'https:' && u\.protocol !== 'http:'/.test(src), '出站守卫拒绝非 http(s) 协议');
+  t(/u\.username \|\| u\.password/.test(src), '出站守卫拒绝 URL 内嵌凭据');
+  t(/chat\\\/completions/.test(src), '出站守卫校验 OpenAI 兼容路径');
   t(/guard|sandbox|沙箱/.test(src), 'ai-client 含出站守卫逻辑');
   // 不该出现把 Token 写到 console/localStorage 明文的代码
   const leaks = src.match(/console\.(log|info|warn|error|debug)\([^)]*\bmemoryToken\b/) || [];
