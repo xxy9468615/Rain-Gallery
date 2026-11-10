@@ -119,7 +119,9 @@ section('4 · 设置保存流程顺序');
   const body = src.slice(anchor, anchor + 6000);
   const first = (re) => {
     const m = body.match(re);
-    return m ? anchor + (m.index + body.slice(0, m.index).length) : -1;
+    // 绝对偏移 = body 起始 + 命中位置。原先写成 m.index + body.slice(0,m.index).length
+    // 等于 2*m.index，报出的 L… 行号是错的（CodeRabbit 抓到）。
+    return m ? anchor + m.index : -1;
   };
   const lineOf = (idx) => (idx < 0 ? -1 : src.slice(0, idx).split('\n').length);
 
@@ -380,6 +382,97 @@ section('10 · 终幕契约（动感计分 / 主动评估 / 快照补全）');
     snapFn ? '' : '未定位到 buildBehaviorSnapshot');
   t(/关系走向（终局）/.test(profSrc) && /被销毁丢失/.test(profSrc),
     'buildStatsDigest 输出关系走向与被销毁物证行');
+}
+
+/* ============================================================
+ * 11. CodeRabbit 第二轮修复回归（18 条，逐条钉死防回退）
+ * ============================================================ */
+section('11 · 第二轮评审修复回归');
+{
+  const aiSrc = read('js/ai-client.js');
+  const gameSrc = read('js/game.js');
+  const cssSrc = read('css/style.css');
+  const promptSrc = read('js/prompts.js');
+  const saSrc = read('js/suspect-ai.js');
+  const hintSrc = read('js/hint.js');
+  const appSrc = read('app.py');
+  const gitattr = read('.gitattributes');
+  const devSrc = read('tools/dev-server.sh');
+
+  // 11.1（Major）流式思维链：跨 chunk 有状态剥离，两处分支都接 sanitizer
+  t(/function createStreamSanitizer\(\)/.test(aiSrc), '流式剥离改为跨 chunk 有状态');
+  t((aiSrc.match(/sanitizer\.push\(sseDeltaPiece/g) || []).length === 2, '两处 SSE 分支都接 sanitizer');
+  t((aiSrc.match(/sanitizer\.flush\(\)/g) || []).length === 2, '两处都有 flush 收尾');
+  t(!/typeof delta\.content === 'string'\) return stripThinking/.test(aiSrc),
+    'sseDeltaPiece 不再逐 chunk 调 stripThinking');
+
+  // 11.2 CORS 暴露 Retry-After + 注释与配置一致
+  t(/expose_headers=\["Retry-After"\]/.test(appSrc), 'CORS expose_headers 含 Retry-After');
+  t(!/Authorization 头予以允许/.test(appSrc), 'CORS 注释不再声称放行 Authorization');
+
+  // 11.3 崩溃摇头 + 心跳不再互相覆盖（rotate/scale 独立属性）
+  t(/@keyframes headShake[\s\S]{0,80}rotate:/.test(cssSrc), 'headShake 改用 rotate 属性');
+  t(/@keyframes tensionPulse[\s\S]{0,60}scale:/.test(cssSrc), 'tensionPulse 改用 scale 属性');
+
+  // 11.4 评级徽章不被 ID 选择器 display 覆盖 hidden
+  t(!/#score-rank-badge\s*\{[^}]*display:/.test(cssSrc), '徽章无 display 覆盖（hidden 生效）');
+
+  // 11.5 求助并发守卫 + 切换嫌疑人校验 + 旧档 NaN 兜底
+  t(/let hintBusy = false/.test(gameSrc) && /if \(hintBusy\) return/.test(gameSrc), '求助并发守卫');
+  t(/state\.activeSuspect !== sid/.test(gameSrc), '求助回来校验嫌疑人未切换');
+  t(/const stats = ensureStats\(\);\s*\n\s*stats\.hintsUsed \+= 1/.test(gameSrc), '求助先 ensureStats（防 NaN）');
+
+  // 11.6 出示物证后刷新对峙条 + 头像态统一 avatarMood
+  t(/renderEvidenceBar\(\);\s*\n\s*renderSuggestQuestions\(\);\s*\n\s*save\(\);/.test(gameSrc),
+    'doPresent 成功后刷新对峙条');
+  t(!/const curMood = stageOf\(st\)/.test(gameSrc), '头像重绘不再用 stageOf');
+
+  // 11.7 评级音效判定按前缀
+  t(/\/\^\[SA\]\/\.test\(sc\.rank\.label\)/.test(gameSrc), '评级音效按 label 前缀判断');
+  t(!/\['S', 'A'\]\.includes\(sc\.rank\.label\)/.test(gameSrc), '不再整串比较 label');
+
+  // 11.8 模型 ID 校验在阶段一（落盘之前）
+  {
+    const iValidate = gameSrc.indexOf('选择了「自定义模型」但没填 ID');
+    const iPersist = gameSrc.indexOf('if (epVal) setEndpointUrl(epVal)');
+    t(iValidate > 0 && iPersist > 0 && iValidate < iPersist, '模型 ID 校验早于落盘',
+      `校验@${iValidate} 落盘@${iPersist}`);
+  }
+
+  // 11.9 免费通道模型说明随 syncEndpointUI 刷新
+  t(/showFreeChannelModel\(\);\s*\n\}/.test(gameSrc), 'syncEndpointUI 末尾刷新模型说明');
+
+  // 11.10 求助超时真正生效
+  t(/withTimeout\([\s\S]{0,400}HINT_TIMEOUT_MS/.test(hintSrc), 'requestHint 用 withTimeout(HINT_TIMEOUT_MS)');
+
+  // 11.11 反注入标签真实存在（askSuspect 包裹 question）
+  t(/<侦探问话>\$\{question\}<\/侦探问话>/.test(saSrc), 'askSuspect 包裹 <侦探问话>');
+  t(!/content: \(preHint \? preHint \+ '\\n' : ''\) \+ question \}/.test(saSrc), '裸 question 推送已移除');
+
+  // 11.12 非流式兜底有超时 + 回收裁判结果
+  t(/result = await withTimeout\([\s\S]{0,320}NPC_TIMEOUT_MS/.test(saSrc), '兜底调用加超时');
+  t(/judgeHit = await judgeSettled/.test(saSrc), '兜底路径回收裁判结果');
+
+  // 11.13 开场句括号配对
+  t(/（玩家"老陆"）的当面问话/.test(promptSrc), '开场句括号配对');
+
+  // 11.14 陈默身份文案（之子非遗孀）
+  t(!/遗孀/.test(read('js/case-data.js')), 'case-data 无「遗孀」误写');
+
+  // 11.15 dev-server 探活三件套
+  t(/import fastapi, uvicorn, httpx/.test(devSrc), 'dev-server 探活 fastapi+uvicorn+httpx');
+  t(!/没有装 fastapi 的解释器也允许启动/.test(devSrc), '删除误导的回退注释');
+
+  // 11.16 proxy-base-test 自身 first() 偏移
+  t(!/m\.index \+ body\.slice\(0, m\.index\)\.length/.test(read('tools/proxy-base-test.mjs')),
+    'first() 偏移不再算成 2*m.index');
+
+  // 11.17 README 断言数与实际一致（74）
+  t(!/proxy-base-test 61 断言/.test(read('README.md')), 'README 断言数已更新');
+  t(/proxy-base-test 74 断言/.test(read('README.md')), 'README 记录 74 断言');
+
+  // 11.18 .gitattributes 注释不再说"按平台还原"
+  t(!/检出时按平台还原/.test(gitattr), '.gitattributes 注释已纠正');
 }
 
 /* ============================================================

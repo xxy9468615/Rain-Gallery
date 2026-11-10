@@ -33,20 +33,17 @@ pick_python() {
   for c in "${PYTHON:-}" ./.venv-test/bin/python ./.venv-test/Scripts/python.exe python3 python; do
     [ -n "$c" ] || continue
     command -v "$c" >/dev/null 2>&1 || [ -x "$c" ] || continue
-    if "$c" -c 'import fastapi' 2>/dev/null; then echo "$c"; return 0; fi
-  done
-  # 没有装 fastapi 的解释器也允许启动（只是没有免费通道，静态托管仍可玩）
-  for c in "${PYTHON:-}" ./.venv-test/bin/python ./.venv-test/Scripts/python.exe python3 python; do
-    [ -n "$c" ] || continue
-    command -v "$c" >/dev/null 2>&1 || [ -x "$c" ] || continue
-    echo "$c"; return 0
+    # 三件套都要探活：app.py 顶层无条件 import fastapi/uvicorn/httpx，
+    # 只查 fastapi 会在缺 uvicorn/httpx 时选中一个 import 阶段就崩的解释器
+    if "$c" -c 'import fastapi, uvicorn, httpx' 2>/dev/null; then echo "$c"; return 0; fi
   done
   return 1
 }
 
 PY="$(pick_python)" || {
-  echo "✗ 未找到 Python 解释器。"
-  echo "  设 PYTHON=/path/to/python,或在 PATH 提供 python3。"
+  echo "✗ 未找到可用的 Python 解释器（需已安装 fastapi / uvicorn / httpx）。"
+  echo "  安装：python3 -m pip install -r requirements.txt"
+  echo "  或设 PYTHON=/path/to/python 指定已装好依赖的解释器。"
   exit 1
 }
 

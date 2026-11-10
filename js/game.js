@@ -1667,22 +1667,39 @@ function renderSuggestQuestions() {
 }
 
 /** 点击求助：向 AI 要一个方向，以旁白气泡呈现（不自动填输入框） */
+let hintBusy = false;   // 求助在途守卫：await 期间可切嫌疑人/发问，无守卫会把 A 的旁白落到 B 的对话流里
 async function onHintRequest() {
+  if (hintBusy) return;                       // 已有一条求助在途，禁止并发再点
   const btn = $('btn-hint');
   if (btn) btn.disabled = true;
-  if (state.stats) state.stats.hintsUsed += 1;
-  const used = state.stats ? state.stats.hintsUsed : 1;
+  // ensureStats 先行：v3.7 之前的旧存档 stats 里没有 hintsUsed 字段，
+  // 直接 +1 会得到 NaN——hintsLeft(NaN)=3（免费求助）、hintPenalty(NaN)=0
+  // （不扣分），NaN 还会随 save() 落盘扩散到 computeScore（CodeRabbit 抓到）
+  const stats = ensureStats();
+  stats.hintsUsed += 1;
+  const used = stats.hintsUsed;
+  const sid = state.activeSuspect;            // 记下发起时的嫌疑人，回来时校验还在不在这间审讯室
   const box = $('suggest-questions');
   if (box) box.innerHTML = '<span class="sq-label">⏳ 旁白在观察……</span>';
 
-  const s = suspectById(state.activeSuspect);
-  const st = state.suspects.get(state.activeSuspect);
+  const s = suspectById(sid);
+  const st = state.suspects.get(sid);
   const known = state.found.map((id) => evidenceById(id)).filter(Boolean);
+  hintBusy = true;
   let out;
   try {
     out = await requestHint(s, st, known, used);
   } catch (e) {
     out = { text: fallbackHint(), source: 'fallback', left: hintsLeft(used) - 1 };
+  } finally {
+    hintBusy = false;
+  }
+  // 等待期间玩家切去了别的审讯室：这条旁白不能落进别人的对话流，
+  // 决策日志也不能记在别人头上——只落回发起时那位（CodeRabbit 抓到）
+  if (state.activeSuspect !== sid) {
+    toast(`（旁白看完了对 ${s.name} 的观察——切回来时再问一次吧）`);
+    save();   // hintsUsed 已扣，仍要落盘
+    return;
   }
   appendHintBubble(out, used);
   renderSuggestQuestions();
@@ -1768,7 +1785,7 @@ async function sendQuestion(isRetry = false) {
     // 流式气泡退场(最终以解析后的 reply 为准重绘,避免把 JSON 残留展示给玩家)
     if (streamBubble) { streamBubble.remove(); streamBubble = null; }
     if (res.note) addBubble('system', `⚠ ${res.note}`);
-    renderEvidenceBar();   // 刷新「已出示」标记
+    renderEvidenceBar();   // 行动(律师锁等)可能已改变对峙条状态
     // v3.0 · AI 裁判命中（与关键词命中并集，共同保证进度下限）
     if (res.judgeHit) {
       const idx = Number(res.judgeHit.tag.split(':')[1]);
@@ -1786,6 +1803,9 @@ async function sendQuestion(isRetry = false) {
       const mood = avatarMood(st);
       if (mood === 'broken' && !st.confessed) {
         addBubble('system', `【${s.name} 的心理防线已崩溃——继续追问让他吐露实情】`);
+      } else if (mood === 'defensive') {
+        // defensive（咬牙硬撑）此前没有任何阶段提示，玩家感知不到状态变化（CodeRabbit 抓到）
+        addBubble('system', `【${s.name} 神色一僵，咬牙硬撑——他在防备你了】`);
       } else if (mood === 'shaken') {
         addBubble('system', `【${s.name} 开始动摇了】`);
       }
@@ -1919,12 +1939,17 @@ async function doPresent(evidenceId) {
     }
     renderSuspectList();
     refreshDialogHeadRel(s, st);
-    const curMood = stageOf(st);
+    // 头像态用 avatarMood（与列表/首渲一致）——此前这里还是 stageOf，
+    // 压力≥2 且敌意≥60 时列表显示「咬牙硬撑」、主头像却显示「动摇」（CodeRabbit 抓到）
+    const curMood = avatarMood(st);
     const headAvatar = $('dialog-head').querySelector('.avatar');
     if (headAvatar) {
       headAvatar.className = `avatar avatar-dialog mood-${curMood}${curMood === 'broken' ? ' tension-heartbeat' : ''}`;
       headAvatar.innerHTML = avatarSVG(s, curMood, { size: 54 });
     }
+    // 出示成功后立即刷新对峙条——「已出示」芯片变暗打勾，
+    // 否则玩家看不出出示是否生效，容易重复点（CodeRabbit 抓到）
+    renderEvidenceBar();
     renderSuggestQuestions();
     save();
   } catch (err) {
@@ -2076,8 +2101,9 @@ function renderScore(sc) {
     const desc = $('score-rank-desc');
     if (badge) badge.hidden = false;
     if (desc) desc.hidden = false;
-    // S/A 上升音阶、C/D 用 wrong()——复用既有素材，零新音频
-    if (['S', 'A'].includes(sc.rank.label)) audio.verdict();
+    // S/A 上升音阶、C/D 用 wrong()。rank.label 是完整文案（如 'S · 镇上传说'），
+    // 不能拿整串去 includes(['S','A'])——那样恒 false，S 级也播失败音（CodeRabbit 抓到）
+    if (/^[SA]/.test(sc.rank.label)) audio.verdict();
     else audio.wrong();
   }, totalDelay + 420);
 }
@@ -2434,6 +2460,10 @@ function syncEndpointUI() {
     freeOpt.disabled = true;
   }
   if (customBlock) customBlock.classList.toggle('dim', mode !== ENDPOINT_MODE.CUSTOM);
+  // 免费通道实际模型说明随模式/探测结果刷新——此前只在 initSettings 调一次，
+  // 切模式/存 Token/重探测后仍显示旧文案（CodeRabbit 抓到）。
+  // syncEndpointUI 是这些路径的共同汇合点，挂这里一劳永逸。
+  showFreeChannelModel();
 }
 
 function initSettings() {
@@ -2627,6 +2657,20 @@ function initSettings() {
       }
     }
 
+    // v3.7.1 · 模型 ID 解析与校验也必须在校验段——此前它排在阶段二落盘之后，
+    // 选了「自定义」没填 ID 时报错返回，但端点/基址/Token 已写入：
+    // 玩家看到红色"✗"以为没保存，实际下一次请求已经发往新配置（CodeRabbit 抓到）
+    let model = sel.value;
+    const typedEl = $('settings-model-id');
+    if (typedEl && typedEl.value.trim()) {
+      model = typedEl.value.trim();
+    } else if (sel.value === '__custom__') {
+      // 选了「自定义」却没填任何值 → 拦下，不落任何盘
+      st.className = 'err';
+      st.textContent = '✗ 选择了「自定义模型」但没填 ID——请填入模型 ID，或改选列表中的模型';
+      return;
+    }
+
     // ── 阶段二：全部通过，才统一落盘 ──
     // 代理基址归一为 origin 后再存，保证 proxyUrl() 拼接不会落入 path/query/hash
     const prevProxy = getProxyBase();
@@ -2638,27 +2682,9 @@ function initSettings() {
     const mode = modeEnc && modeEnc.checked ? STORAGE_MODE.ENCRYPTED : STORAGE_MODE.MEMORY;
     await aiSettings.setToken(rawToken, mode);
 
-    // v3.7 · 模型 ID：优先取输入框（取代原先的 gamePrompt 弹窗）。
-    // 存什么读什么，白名单不再作为过滤条件——玩家手填的 glm-4-plus 之类
-    // 以前每次都被重置回默认值，等于"换了模型但没换"。
-    let model = sel.value;
-    const typed = $('settings-model-id');
-    if (model === '__custom__' || (typed && typed.value.trim())) {
-      const typedVal = (typed && typed.value.trim()) || '';
-      if (typedVal) {
-        model = typedVal;
-      } else if (sel.value !== '__custom__') {
-        model = sel.value;
-      } else {
-        // 选了「自定义」却没填任何值 → 保留当前模型，不让配置变空
-        model = aiSettings.getModel();
-        st.className = 'err';
-        st.textContent = '✗ 选择了「自定义模型」但没填 ID——请填入模型 ID，或改选列表中的模型';
-        return;
-      }
-    }
+    // 模型 ID 已在阶段一解析并校验通过（输入框优先，存什么读什么）
     aiSettings.setModel(model);
-    if (modelInput) modelInput.value = model;
+    if (typedEl) typedEl.value = model;
 
     updateAIBadge();
     updateIntroAICard();

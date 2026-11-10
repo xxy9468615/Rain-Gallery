@@ -587,24 +587,63 @@ export function validateTokenFormat(token) {
 }
 
 /**
- * 从一条 SSE chunk 里取出本段正文（已剥思维链）。
+ * 流式思维链剥离器（有状态，跨 chunk）。
  * ------------------------------------------------------------
- * 两处流式分支（free 通道 / custom 通道）都要用，行为必须一致，
- * 否则同一个模型在两个通道下一个泄漏思维链另一个不泄漏。
+ * 正确做法必须基于**累积原文**：标记和正文会被拆进不同的 SSE chunk，
+ * 逐 chunk 调 stripThinking 会四连漏（实测被 CodeRabbit 抓到）：
+ *   1. 首个 chunk 只有开标签 → 被"未闭合"规则整段吃掉，正文永不出现
+ *   2. 后续纯思维链 chunk 不含任何标签 → 原样漏给玩家
+ *   3. 单独到达的闭标签不匹配任何规则 → 作为字面文本漏出
+ *   4. 逐 chunk 的 .trim() 会吃掉英文单词间的空格（" world"→"world"）
  *
+ * 策略：累积原始文本 → 对累积串整体 stripThinking → 与上次已确认输出
+ * 的干净长度做前缀差分 → 只把新增部分发给 onDelta。
+ * 末尾若有未闭合的 `<…` 暂扣不发（标签可能被拆在 chunk 边界），
+ * 等下一 chunk 到齐或流结束时再放行。
+ */
+function createStreamSanitizer() {
+  let raw = '';        // 累积原文
+  let cleanLen = 0;     // 已确认输出的干净前缀长度
+  return {
+    /** 喂入一个 chunk 的原始正文，返回本段新增的干净文本（可能为空串） */
+    push(piece) {
+      raw += piece;
+      // 末尾悬挂着未闭合的 `<`：标签可能被拆在 chunk 边界，整段暂扣
+      const hangIdx = raw.lastIndexOf('<');
+      const safeEnd = (hangIdx >= 0 && raw.indexOf('>', hangIdx) < 0) ? hangIdx : raw.length;
+      const clean = stripThinking(raw.slice(0, safeEnd));
+      // stripThinking 带 trim：干净前缀不会以空白结尾，直接按长度截新增段
+      if (clean.length <= cleanLen) return '';
+      const fresh = clean.slice(cleanLen);
+      cleanLen = clean.length;
+      return fresh;
+    },
+    /** 流结束：对完整原文做最终剥离（此前被暂扣的尾巴在此放行） */
+    flush() {
+      const clean = stripThinking(raw);
+      const fresh = clean.length > cleanLen ? clean.slice(cleanLen) : '';
+      cleanLen = clean.length;
+      raw = clean;   // 后续若还有人调用也不会重复输出
+      return fresh;
+    },
+  };
+}
+
+/**
+ * 从一条 SSE chunk 里取出本段**原始**正文（不做剥离）。
+ * ------------------------------------------------------------
+ * 剥离由调用方持有的 createStreamSanitizer() 实例做（跨 chunk 有状态）。
  * 三种上游形态都覆盖：
  *   - delta.content             绝大多数 OpenAI 兼容上游
  *   - delta.message.content     合帧场景（上游把整条 message 塞进 delta）
- *   - 思维链出现在 content 里   部分上游不区分 reasoning_content / content，
- *                               直接混着吐 → 必须过 stripThinking
  */
 function sseDeltaPiece(parsed) {
   const delta = parsed && parsed.choices && parsed.choices[0] && parsed.choices[0].delta;
   if (!delta) return '';
-  if (typeof delta.content === 'string') return stripThinking(delta.content);
+  if (typeof delta.content === 'string') return delta.content;
   if (typeof delta.message === 'object' && delta.message
       && typeof delta.message.content === 'string') {
-    return stripThinking(delta.message.content);
+    return delta.message.content;
   }
   return '';
 }
@@ -949,6 +988,7 @@ export async function chatCompletionStream(messages, opts = {}) {
     }
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
+    const sanitizer = createStreamSanitizer();   // 跨 chunk 剥思维链（标记会被拆进不同 chunk）
     let buffer = '';
     let full = '';
     while (true) {
@@ -964,11 +1004,14 @@ export async function chatCompletionStream(messages, opts = {}) {
         if (!dataStr || dataStr === '[DONE]') continue;
         try {
           const parsed = JSON.parse(dataStr);
-          const piece = sseDeltaPiece(parsed);
+          const piece = sanitizer.push(sseDeltaPiece(parsed));
           if (piece) { full += piece; opts.onDelta && opts.onDelta(piece, full); }
         } catch (e) { /* SSE keep-alive 行或非标准 chunk,忽略 */ }
       }
     }
+    // 流结束：放行此前被暂扣的尾巴（未闭合 <… 的判断到此失效，做最终整体剥离）
+    const tail = sanitizer.flush();
+    if (tail) { full += tail; opts.onDelta && opts.onDelta(tail, full); }
     if (!full) throw { code: 'EMPTY', message: '模型流式返回为空' };
     if (opts.kind !== 'judge') proxyState.sessionUsed += 1;
     return full;
@@ -999,6 +1042,7 @@ export async function chatCompletionStream(messages, opts = {}) {
   }
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
+  const sanitizer = createStreamSanitizer();   // 与 free 通道同一套跨 chunk 剥离
   let buffer = '';
   let full = '';
   while (true) {
@@ -1014,11 +1058,13 @@ export async function chatCompletionStream(messages, opts = {}) {
       if (!dataStr || dataStr === '[DONE]') continue;
       try {
         const parsed = JSON.parse(dataStr);
-        const piece = sseDeltaPiece(parsed);
+        const piece = sanitizer.push(sseDeltaPiece(parsed));
         if (piece) { full += piece; opts.onDelta && opts.onDelta(piece, full); }
       } catch (e) { /* ignore */ }
     }
   }
+  const tail = sanitizer.flush();
+  if (tail) { full += tail; opts.onDelta && opts.onDelta(tail, full); }
   return full;
 }
 

@@ -15,7 +15,7 @@
  * ============================================================ */
 
 import { PROMPTS } from './prompts.js?v=3.6.0';
-import { chatCompletion } from './ai-client.js?v=3.6.0';
+import { chatCompletion, withTimeout } from './ai-client.js?v=3.6.0';
 
 /** 一局可求助次数 */
 export const HINT_LIMIT = 3;
@@ -147,12 +147,18 @@ export async function requestHint(suspect, st, knownEvidences, hintsUsed = 1) {
   const left = hintsLeft(hintsUsed);   // hintsUsed 已含本次
   let raw = '';
   try {
-    raw = await chatCompletion(
-      [
-        { role: 'system', content: '你是《雨夜画廊》的旁白顾问。回复只能是提示本身，不要解释、不要 JSON、不要思考过程。' },
-        { role: 'user', content: PROMPTS.HINT(suspect, st, knownEvidences, left) },
-      ],
-      { temperature: 0.9, maxTokens: 200 },
+    // HINT_TIMEOUT_MS 必须真正生效（此前定义了却没接 withTimeout——CodeRabbit 抓到）：
+    // 上游挂起时界面会永远停在「⏳ 旁白在观察……」，而 hintsUsed 已 +1、
+    // 分已扣——玩家白白损失一次额度还看不到任何回应。
+    raw = await withTimeout(
+      () => chatCompletion(
+        [
+          { role: 'system', content: '你是《雨夜画廊》的旁白顾问。回复只能是提示本身，不要解释、不要 JSON、不要思考过程。' },
+          { role: 'user', content: PROMPTS.HINT(suspect, st, knownEvidences, left) },
+        ],
+        { temperature: 0.9, maxTokens: 200 },
+      ),
+      HINT_TIMEOUT_MS,
     );
   } catch (e) {
     return { text: fallbackHint(), source: 'fallback', left };

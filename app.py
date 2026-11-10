@@ -65,7 +65,8 @@ app = FastAPI(title="Rain Gallery Free-AI Proxy", docs_url=None, redoc_url=None)
 #   - 只有在本地调试时才值得写 CORS_ALLOWED_ORIGINS=*（任意来源可跨域调用，
 #     会消耗共享日额度，且 CORS 拦不住非浏览器客户端，不能当鉴权用）。
 # allow_credentials=False：免费通道不依赖 Cookie，绝不与 allow_origins=["*"] 组合放大风险。
-# Authorization 头予以允许，但本代理免费通道一律由服务端持有 Key，前端传什么都不生效。
+# 注意：前端不向本代理发送 Authorization 头（免费通道由服务端持 Key），
+#       故 allow_headers 只列实际会用到的两个；多列一个会让预检放宽而毫无收益。
 def _cors_origins() -> list:
     """解析 CORS 来源白名单（逗号分隔）；空列表 = 未配置 = 拒绝跨域。"""
     raw = os.environ.get("CORS_ALLOWED_ORIGINS", "")
@@ -78,6 +79,10 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "X-Session-Id"],
+    # 跨域时浏览器默认只让脚本读取 CORS 安全响应头；Retry-After 不在其中。
+    # 前端 _rawProxy 靠它做限流退避，不透出的话分域部署下会静默退回固定 2s 退避
+    # ——而这正是本 PR 新增的场景（CodeRabbit 抓到）。
+    expose_headers=["Retry-After"],
 )
 
 # ---------------- 计数额（内存态，重启清零；不含任何对话内容） ----------------

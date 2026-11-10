@@ -557,21 +557,24 @@ button { font-family: var(--sans); }
   border-color: var(--danger) !important;
   box-shadow: 0 0 16px rgba(196, 87, 78, .5);
 }
-/* 崩溃态缓慢摇头（2.5° 微幅，幅度过大像 bug） */
+/* 崩溃态缓慢摇头（2.5° 微幅，幅度过大像 bug）。
+ * 用 rotate 独立属性而非 transform——头像同时带 tension-heartbeat
+ * （scale 心跳），两个动画都写 transform 会互相覆盖（CodeRabbit 抓到），
+ * 独立属性让两者并行不冲突。 */
 .avatar-dialog.mood-broken {
   animation: headShake 4s ease-in-out infinite;
 }
 @keyframes headShake {
-  0%, 100% { transform: rotate(0deg); }
-  25% { transform: rotate(-2.5deg); }
-  75% { transform: rotate(2.5deg); }
+  0%, 100% { rotate: 0deg; }
+  25% { rotate: -2.5deg; }
+  75% { rotate: 2.5deg; }
 }
 .tension-heartbeat {
   animation: tensionPulse 1.2s infinite ease-in-out;
 }
 @keyframes tensionPulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.06); }
+  0%, 100% { scale: 1; }
+  50% { scale: 1.06; }
 }
 @media (prefers-reduced-motion: reduce) {
   .avatar-dialog.mood-broken, .tension-heartbeat { animation: none !important; }
@@ -726,8 +729,11 @@ button { font-family: var(--sans); }
   transform: rotate(-1.5deg);
   animation: stampIn .45s cubic-bezier(.2, 1.4, .4, 1) both;
 }
-/* 徽章整行居中（hidden 切换时也要撑住布局） */
-#score-rank-badge { display: inline-block; }
+/* 徽章整行居中。
+ * 注意不能给 #score-rank-badge 写 display——renderScore 靠 hidden 属性
+ * 先藏住徽章、等总分滚完再亮出「最后盖章」的节奏；ID 选择器的
+ * display:inline-block 会覆盖 UA 的 [hidden]{display:none}（CodeRabbit 抓到）。
+ * 居中交给父级 text-align，显隐只交给 hidden 属性。 */
 .score-box > #score-rank-badge, .score-box > #score-rank-desc { text-align: center; }
 @keyframes stampIn {
   0% { opacity: 0; transform: scale(2.2) rotate(-14deg); }
