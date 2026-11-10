@@ -108,6 +108,19 @@ export function buildStatsDigest(snap, sc) {
     })
     .map((s) => s.name)
     .join('、') || '无人完整坦白';
+  // v3.7 · 关系走向：逐人列出终局的信任/敌意/阶段。
+  // 这是 AI 侧写能评论具体决策的唯一依据——「你在林曼青敌意 70 时仍强行施压」
+  // 只有同时看到 hostility 和 pressure 才说得出。
+  const relLine = CASE.suspects
+    .map((s) => {
+      const st = (snap.suspectsState || {})[s.id];
+      return st ? `${s.name} 信${st.trust}/敌${st.hostility}/压${st.pressure}(${st.stage})` : null;
+    })
+    .filter(Boolean)
+    .join('、') || '（本局未与任何人交谈）';
+  const lost = snap.lostEvidence && snap.lostEvidence.length
+    ? snap.lostEvidence.map((id) => (CASE.evidences.find((e) => e.id === id) || {}).name || id).join('、')
+    : '';
   // 求助痕迹：AI 评估要能评论「玩家在哪个节点卡住了」，
   // 求助次数是「独立作答能力」最直接的代理指标。
   const hintsUsed = stats.hintsUsed || 0;
@@ -117,9 +130,10 @@ export function buildStatsDigest(snap, sc) {
 
   return [
     `用时：约 ${minutes} 分钟`,
-    `物证：找到 ${snap.found.length}/${CASE.evidences.length} 条，发现顺序为「${(stats.evidenceOrder || []).join(' → ') || '无'}」，第一件发现的是《${firstFound}》`,
+    `物证：找到 ${snap.found.length}/${CASE.evidences.length} 条，发现顺序为「${(stats.evidenceOrder || []).join(' → ') || '无'}」，第一件发现的是《${firstFound}》${lost ? `；被销毁丢失：${lost}` : ''}`,
     `剧情热点：查看 ${snap.dramasSeen.length}/1 处；房间访问分布：${rooms}（首选进入：${firstRoomObj ? firstRoomObj.name : '无'}）`,
     `审讯：总提问 ${snap.askedTotal} 次（${qLine}），戳穿 ${snap.crackCount} 次，${confessions}`,
+    `关系走向（终局）：${relLine}`,
     `出示物证：${presents}；重复查看已收集物证 ${stats.repeatViews || 0} 次，重复提问 ${stats.repeatQuestions || 0} 次`,
     `指认：${snap.accused ? (CASE.suspects.find((s) => s.id === snap.accused) || {}).name : '（未指认）'}；定罪证据勾选 ${(snap.chosenEvidence || []).length} 条`,
     hintLine,

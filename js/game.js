@@ -1870,20 +1870,86 @@ function computeScore(juryCorrect) {
   return { culpritOk, keyHits, evidenceScore, investigate, interrogation, hintCut, hintsUsed: hints, total, rank };
 }
 
+/**
+ * v3.7 · 动感计分：四个分项依次点亮、总分 rAF 滚动、评级徽章最后弹出。
+ * 拆成「骨架 + 动画填充」而不是直接 innerHTML 一次性写完——
+ * 终幕是玩家情绪的最高点，静态一坨数字给不出"结算感"。
+ * 动效不阻塞存档：runFinal 里 finish/save 在本函数返回后照常执行。
+ */
 function renderScore(sc) {
   const box = $('score-box');
   box.classList.remove('hidden');
-  const hintRow = sc.hintCut
-    ? `<div class="score-row score-row-penalty"><span>旁白求助（${sc.hintsUsed} 次）</span><b>-${sc.hintCut}</b></div>`
-    : '';
-  box.innerHTML = `
-    <div class="score-rank">${sc.rank.label}</div>
-    <div class="score-rank-desc">${sc.rank.desc}</div>
-    <div class="score-row"><span>凶手指认（${sc.culpritOk ? '✓ 正确' : '✗ 错误'}）</span><b>${sc.culpritOk ? 40 : 0} / 40</b></div>
-    <div class="score-row"><span>定罪证据链（命中关键证据 ${sc.keyHits} 条）</span><b>${sc.evidenceScore} / 36</b></div>
-    <div class="score-row"><span>现场调查（物证 ${state.found.length}/${CASE.evidences.length}）</span><b>${sc.investigate} / 12</b></div>
-    <div class="score-row"><span>审讯攻防（戳穿 ${state.crackCount} 次）</span><b>${sc.interrogation} / 12</b></div>${hintRow}
-    <div class="score-total"><span>综合评分</span><b>${sc.total}</b></div>`;
+
+  const rows = [
+    { label: `凶手指认（${sc.culpritOk ? '✓ 正确' : '✗ 错误'}）`, value: sc.culpritOk ? 40 : 0, max: 40 },
+    { label: `定罪证据链（命中关键证据 ${sc.keyHits} 条）`, value: sc.evidenceScore, max: 36 },
+    { label: `现场调查（物证 ${state.found.length}/${CASE.evidences.length}）`, value: sc.investigate, max: 12 },
+    { label: `审讯攻防（戳穿 ${state.crackCount} 次）`, value: sc.interrogation, max: 12 },
+  ];
+  if (sc.hintCut) {
+    rows.push({ label: `旁白求助（${sc.hintsUsed} 次）`, value: -sc.hintCut, max: 0, penalty: true });
+  }
+
+  // 骨架先落位（高度稳定，动画期间不跳动）
+  box.innerHTML = `<div class="score-rank" id="score-rank-badge" hidden>${sc.rank.label}</div>
+    <div class="score-rank-desc" id="score-rank-desc" hidden>${sc.rank.desc}</div>
+    ${rows.map((r, i) => `
+      <div class="score-row${r.penalty ? ' score-row-penalty' : ''}" id="score-row-${i}" data-ready="0">
+        <span>${r.label}</span><b class="score-val">${r.penalty ? '-' : ''}0</b><i class="score-bar"><i style="width:0%"></i></i>
+      </div>`).join('')}
+    <div class="score-total" id="score-total"><span>综合评分</span><b class="score-total-val">0</b></div>`;
+
+  // 依次点亮：每行先弹出标签，再数字滚动、进度条增长
+  rows.forEach((r, i) => {
+    setTimeout(() => animateScoreRow($(`score-row-${i}`), r), 220 * (i + 1));
+  });
+  const totalDelay = 220 * (rows.length + 1);
+  setTimeout(() => animateTotal($('score-total'), sc.total), totalDelay);
+  setTimeout(() => {
+    const badge = $('score-rank-badge');
+    const desc = $('score-rank-desc');
+    if (badge) badge.hidden = false;
+    if (desc) desc.hidden = false;
+    // S/A 上升音阶、C/D 用 wrong()——复用既有素材，零新音频
+    if (['S', 'A'].includes(sc.rank.label)) audio.verdict();
+    else audio.wrong();
+  }, totalDelay + 420);
+}
+
+/** 单行动画：数字滚动 + 进度条增长 */
+function animateScoreRow(el, row) {
+  if (!el) return;
+  el.dataset.ready = '1';
+  const valEl = el.querySelector('.score-val');
+  const barEl = el.querySelector('.score-bar > i');
+  const target = row.value;
+  const start = performance.now();
+  const dur = 480;
+  const max = row.max || 1;
+  const tick = (now) => {
+    const k = Math.min(1, (now - start) / dur);
+    const eased = 1 - Math.pow(1 - k, 3);            // easeOutCubic
+    const cur = Math.round(target * eased);
+    if (valEl) valEl.textContent = (row.penalty ? '-' : '') + Math.abs(cur);
+    if (barEl) barEl.style.width = `${Math.min(100, (Math.abs(cur) / max) * 100)}%`;
+    if (k < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+/** 总分滚动（比单行稍慢，落停时更有分量） */
+function animateTotal(el, target) {
+  if (!el) return;
+  const valEl = el.querySelector('.score-total-val');
+  const start = performance.now();
+  const dur = 720;
+  const tick = (now) => {
+    const k = Math.min(1, (now - start) / dur);
+    const eased = 1 - Math.pow(1 - k, 3);
+    if (valEl) valEl.textContent = Math.round(target * eased);
+    if (k < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
 }
 
 function renderTruth() {
@@ -1900,11 +1966,23 @@ function buildBehaviorSnapshot() {
   const stats = ensureStats();
   let confessedCount = 0;
   state.suspects.forEach((st) => { if (st.confessed) confessedCount++; });
+  // v3.7 · 关系数值与阶段也进快照。此前只传 confessed/pressure，
+  // AI 侧写看不到 trust/hostility，就说不出「你在林曼青敌意 70 时仍强行施压」
+  // 这种具体到决策的观察——只剩次数统计，报告容易沦为泛泛的赞美。
   const suspectsState = {};
-  state.suspects.forEach((st, id) => { suspectsState[id] = { confessed: st.confessed, pressure: st.pressure }; });
+  state.suspects.forEach((st, id) => {
+    suspectsState[id] = {
+      confessed: st.confessed,
+      pressure: st.pressure,
+      trust: st.trust,
+      hostility: st.hostility,
+      stage: stageOf(st),
+    };
+  });
   return {
     stats,
     found: state.found,
+    lostEvidence: state.lostEvidence || [],     // 被销毁的物证（苏晓删照等）
     dramasSeen: state.dramasSeen || [],
     crackCount: state.crackCount,
     askedTotal: state.askedTotal,
@@ -1913,6 +1991,34 @@ function buildBehaviorSnapshot() {
     confessedCount,
     usedPresent: stats.presentsTotal > 0,
   };
+}
+
+/**
+ * v3.7 · 能力评估 CTA（用户主动触发）。
+ * 结算与评估分离：评分是规则算分（renderScore 已完成），
+ * 评估是 AI 读整局行为痕迹的侧写——不该自动抢戏。
+ * 已有缓存（续玩档生成过 / 本局点过）则直接渲染报告，不重复调 AI。
+ */
+function renderCapabilityCTA(sc) {
+  const box = $('eval-box');
+  if (!box) return;
+  box.classList.remove('hidden');
+  if (state.evaluation) {
+    // 已生成过：直接重渲染，不重新调 AI（省额度也避免结论前后不一）
+    renderEvalBox(state.evaluation.profile, state.evaluation.report);
+    return;
+  }
+  box.innerHTML = `<div class="cta-card">
+    <div class="cta-title">🧠 侦探能力评估</div>
+    <p class="cta-desc">
+      评分到此为止。接下来这一份由大模型<b>依据你整晚的行为痕迹</b>独立撰写——
+      你在现场怎么搜、审讯时怎么问、如何取舍证据链——它会据此评出五个维度的能力画像。
+      <span class="dim">与上面的综合评分无关，也不影响任何存档。</span>
+    </p>
+    <button id="btn-capability" class="primary-btn pulse-glow">生成我的能力评估</button>
+  </div>`;
+  const btn = $('btn-capability');
+  if (btn) btn.addEventListener('click', () => { audio.click(); renderEvaluationReport(sc); });
 }
 
 async function renderEvaluationReport(sc) {
@@ -2073,7 +2179,11 @@ async function runFinal() {
       <div class="epilogue-text">${(state.epilogue || '').replace('【关系尾声】\n', '')}</div>
       ${logDigest ? `<details class="decision-log"><summary>🧪 NPC 决策日志（AI 决策 × 规则层校验，共 ${getDecisionLog().length} 条）</summary><pre>${logDigest.replace(/^.*：\n/, '')}</pre></details>` : ''}`;
   }
-  await renderEvaluationReport(sc);
+  // v3.7 · 能力评估改为用户主动触发（不再自动跑）：
+  // 结算与评估是两件事——评分是规则算分，评估是 AI 读整局行为痕迹的侧写。
+  // 自动触发会让玩家在还没读完真相时就被一份 380 字的报告打断。
+  // 已生成过的（state.evaluation 有缓存）仍直接渲染，续玩档不重复生成。
+  renderCapabilityCTA(sc);
   state.finished = true;
   save();
   // 密钥安全：结案后自动销毁策略（0 保留，进度/报告已先行落盘）
@@ -2734,12 +2844,10 @@ function resumeGamePhase() {
     const sc = computeScore(state.accused === CASE.truth.culprit);
     renderScore(sc);
     renderTruth();
-    // 存档中已有侧写报告 → 直接重渲染，不再调 AI
-    if (state.evaluation && state.evaluation.profile && state.evaluation.report) {
-      renderEvalBox(state.evaluation.profile, state.evaluation.report);
-    } else {
-      renderEvaluationReport(sc);
-    }
+    // v3.7 · 评分重算（computeScore 是纯函数，只读落盘字段）；
+    // 评估按需触发——renderCapabilityCTA 内部识别 state.evaluation
+    // 有缓存就直出报告，没有才显示 CTA 按钮。
+    renderCapabilityCTA(sc);
   } else if (state.phase === 'invest') {
     gotoInvest();
   } else if (state.phase === 'interrogate') {
