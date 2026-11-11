@@ -35,10 +35,23 @@ from fastapi.staticfiles import StaticFiles
 # ---------------- 配置 ----------------
 # 全部来自环境变量 / 创空间 Secret，代码零硬编码——换上游服务商、换模型只改环境变量。
 # 部署时的最小配置：RG_PROXY_TOKEN + RG_PROXY_API_BASE + RG_PROXY_MODEL 三项。
-# TOKEN 留空时会回退读 MODELSCOPE_SDK_TOKEN（创空间 gradio 框架自动注入的那个）。
-PROXY_TOKEN = (os.environ.get("RG_PROXY_TOKEN") or os.environ.get("MODELSCOPE_SDK_TOKEN") or "").strip()
 API_BASE = os.environ.get("RG_PROXY_API_BASE", "https://api.generalcompute.com/v1/chat/completions").strip()
 PROXY_MODEL = os.environ.get("RG_PROXY_MODEL", "gemma-4-31B-it").strip()
+
+# Token 回退读 MODELSCOPE_SDK_TOKEN 只在上游仍是魔搭时成立——
+# 默认端点已换成第三方（generalcompute）。若无条件回退，创空间自动注入的
+# 魔搭令牌会被发往第三方端点（CodeRabbit 抓到：凭据误用 + 预检工具默认值不一致）。
+# 换回魔搭上游时改 API_BASE 即可，或用 MODELSCOPE_FALLBACK_TOKEN=1 显式允许。
+def _modelscope_fallback_ok() -> bool:
+    """是否允许把 MODELSCOPE_SDK_TOKEN 当作免费通道 Key。"""
+    if os.environ.get("MODELSCOPE_FALLBACK_TOKEN") == "1":
+        return True
+    return "modelscope.cn" in API_BASE
+
+
+PROXY_TOKEN = (os.environ.get("RG_PROXY_TOKEN")
+               or (os.environ.get("MODELSCOPE_SDK_TOKEN") if _modelscope_fallback_ok() else "")
+               or "").strip()
 DAILY_CAP = max(1, int(os.environ.get("RG_DAILY_CAP", "20000")))
 
 SESSION_CAP = 150          # 每局（会话）主调用上限：一局问答约 30~60 次，余量充足

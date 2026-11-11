@@ -1377,16 +1377,20 @@ function onHotspot(id) {
   save();
 }
 
-function openEvidenceModal(title, found, detail, ev, customArt = null) {  $('evidence-title').innerHTML = title;
+function openEvidenceModal(title, found, detail, ev, customArt = null) {
+  const esc = escapeHtml;
+  $('evidence-title').innerHTML = esc(title);
   // v3.7.3 · 删掉「侦探直觉：这条线索与 XX 的说法存在出入」。
   // 11 条物证里 11 条都带 implicates，等于每捡一条线索就附送一次
   // 「该拿这条去对质谁」——把推理解谜最核心的一步代劳了，难度归零。
   // 注意：case-data 的 implicates 字段仍保留，suspect-ai.js 的 addCrack
   // 算分要用它（内部逻辑，不呈现给玩家）。
+  // esc：三个字段目前都来自 CASE 静态字面量，风险低；但与 renderEvalBox 保持
+  // 同一规则，避免以后有 AI/存档内容流进来时漏改（CodeRabbit 抓到不一致）。
   $('evidence-body').innerHTML = `
     ${customArt ? `<div class="evidence-art-wrap" style="text-align:center;margin-bottom:14px;">${customArt}</div>` : ''}
-    <div class="big">${found}</div>
-    ${detail ? `<div class="detail">🔎 ${detail}</div>` : ''}`;
+    <div class="big">${esc(found)}</div>
+    ${detail ? `<div class="detail">🔎 ${esc(detail)}</div>` : ''}`;
   $('modal-evidence').classList.remove('hidden');
 }
 
@@ -2084,9 +2088,12 @@ function renderScore(sc) {
   }
 
   // 骨架先落位（高度稳定，动画期间不跳动）
+  // rank.label/desc 来自 CASE.scoring 静态配置，按 escapeHtml 统一处理——
+  // 与 renderEvalBox 同一规则，不留"以后加字段时漏改"的坑（CodeRabbit 抓到）。
+  const esc = escapeHtml;
   box.innerHTML = `<div class="score-head">SCORE SHEET · 结案评分</div>
-    <div class="score-rank" id="score-rank-badge" hidden>${sc.rank.label}</div>
-    <div class="score-rank-desc" id="score-rank-desc" hidden>${sc.rank.desc}</div>
+    <div class="score-rank" id="score-rank-badge" hidden>${esc(sc.rank.label)}</div>
+    <div class="score-rank-desc" id="score-rank-desc" hidden>${esc(sc.rank.desc)}</div>
     ${rows.map((r, i) => `
       <div class="score-row${r.penalty ? ' score-row-penalty' : ''}" id="score-row-${i}" data-ready="0">
         <span>${r.label}</span><b class="score-val">${r.penalty ? '-' : ''}0</b><i class="score-bar"><i style="width:0%"></i></i>
@@ -2847,11 +2854,12 @@ function initSettings() {
       const prev = aiSettings.getModel();
       aiSettings.setModel(id);
       try {
+        // testConnection 成功只返回 {reply, latency}，失败直接抛结构化异常——
+        // 没有 ok/ms/message 字段。原先读 r.ok 恒为 undefined，每个可用模型
+        // 都被判成「不可用」，测试按钮形同虚设（CodeRabbit 抓到）。
         const r = await testConnection(aiSettings.getToken(), id);
-        st.className = r.ok ? 'ok' : 'err';
-        st.textContent = r.ok
-          ? `✓ ${id} 可用（${r.ms}ms）`
-          : `✗ ${id} 不可用：${r.message || '请求失败'}`;
+        st.className = 'ok';
+        st.textContent = `✓ ${id} 可用（${r.latency}ms）`;
       } catch (e) {
         st.className = 'err';
         st.textContent = `✗ 测试失败：${(e && e.message) || '未知错误'}`;

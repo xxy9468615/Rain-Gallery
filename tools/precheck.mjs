@@ -50,7 +50,9 @@ else if (TOKEN_PROBE && MODEL_PROBE) ok('未找到 .env，改用环境变量（C
 else bad('.env 未找到且环境变量为空', '测试需要 RG_PROXY_TOKEN 与 RG_PROXY_MODEL');
 
 const TOKEN = (process.env.MODELSCOPE_TOKEN || process.env.RG_PROXY_TOKEN || '').trim();
-const API_BASE = (process.env.RG_PROXY_API_BASE || 'https://api-inference.modelscope.cn/v1/chat/completions').trim();
+// 默认上游必须与 app.py 的 API_BASE 默认值保持一致——否则只配 TOKEN/MODEL 时，
+// 预检会把 A 服务商的凭据发往 B 服务商（CodeRabbit 抓到）。
+const API_BASE = (process.env.RG_PROXY_API_BASE || 'https://api.generalcompute.com/v1/chat/completions').trim();
 const MODEL = (process.env.RG_PROXY_MODEL || '').trim();
 // 上游是"任意 OpenAI 兼容服务"：魔搭、讯飞星火、其他中转都可能。
 // 不按域名 / 不按 Token 前缀做判断，一律以"实际能否返回 content"为准。

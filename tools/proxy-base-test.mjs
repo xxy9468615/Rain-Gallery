@@ -528,9 +528,9 @@ section('11 · 第二轮评审修复回归');
   t(!/m\.index \+ body\.slice\(0, m\.index\)\.length/.test(read('tools/proxy-base-test.mjs')),
     'first() 偏移不再算成 2*m.index');
 
-  // 11.17 README 断言数与实际一致（165）
-  t(!/proxy-base-test (?:61|74|114|124|125|126|137|139|143|151|156|159) 断言/.test(read('README.md')), 'README 断言数已更新');
-  t(/proxy-base-test 165 断言/.test(read('README.md')), 'README 记录 165 断言');
+  // 11.17 README 断言数与实际一致（175）
+  t(!/proxy-base-test (?:61|74|114|124|125|126|137|139|143|151|156|159|165) 断言/.test(read('README.md')), 'README 断言数已更新');
+  t(/proxy-base-test 175 断言/.test(read('README.md')), 'README 记录 175 断言');
 
   // 11.18 .gitattributes 注释不再说"按平台还原"
   t(!/检出时按平台还原/.test(gitattr), '.gitattributes 注释已纠正');
@@ -570,7 +570,14 @@ section('11 · 第二轮评审修复回归');
       const missing = execFileSync('python3', ['-c', scan], { cwd: ROOT, encoding: 'utf8' }).trim();
       t(missing === '0', 'Python 函数 docstring 全覆盖', missing === '0' ? '' : `缺失 ${missing} 个`);
     } catch (e) {
-      t(true, 'Python docstring 检查跳过（python3 不可用）');
+      // 只有解释器缺失才算跳过；扫描脚本本身崩溃（语法错误/编码错误/非零退出）
+      // 必须记失败——否则这道门槛会显示绿色却什么也没查（CodeRabbit 抓到）。
+      if (e && e.code === 'ENOENT') {
+        console.log('  \x1b[33m⚠\x1b[0m Python docstring 检查跳过（python3 不可用）');
+      } else {
+        const tail = String((e && (e.stderr || e.message)) || e).trim().split('\n').slice(-1)[0];
+        t(false, 'Python docstring 扫描执行失败', tail);
+      }
     }
   }
 
@@ -646,6 +653,35 @@ section('11 · 第二轮评审修复回归');
   t(!/这是.{0,6}的秘密/.test(caseSrc), 'detail 不直接点破「这是谁的秘密」');
   t(!/她谎称/.test(caseSrc), 'detail 不替玩家下「她在撒谎」的判断');
   t(!/值得当面对质/.test(caseSrc), 'detail 不指示下一步该怎么操作');
+
+  // 11.33 模型测试按钮读对 testConnection 的返回字段（Major 误报为不可用）
+  t(/const r = await testConnection\(/.test(gameSrc) && /r\.latency/.test(gameSrc),
+    '测试结果显示 latency（不是不存在的 ok/ms）');
+  t(!/r\.ok \?/.test(gameSrc), '不再读不存在的 r.ok');
+
+  // 11.34 魔搭 SDK Token 不会在第三方端点被回退（凭据误用防护）
+  t(/_modelscope_fallback_ok/.test(appSrc) && /"modelscope\.cn" in API_BASE/.test(appSrc),
+    'MODELSCOPE_SDK_TOKEN 仅在上游为魔搭时回退');
+  t(!/os\.environ\.get\("MODELSCOPE_SDK_TOKEN"\) or ""/.test(appSrc),
+    'Token 回退不再是无条件 or');
+
+  // 11.35 SKIP_ENV_FILE=1 时无 .env 也能启动
+  t(/SKIP_ENV_FILE:-0\}" != "1" \]/.test(devSrc), '无 .env 时认 SKIP_ENV_FILE 开关');
+
+  // 11.36 docstring 扫描失败必须记失败，不能吞掉算通过
+  const selfSrc = read('tools/proxy-base-test.mjs');
+  t(/e\.code === 'ENOENT'/.test(selfSrc), 'docstring 检查区分「解释器缺失」与「扫描失败」');
+  t(/t\(false, 'Python docstring 扫描执行失败'/.test(selfSrc), '扫描失败记 red 而非跳过');
+
+  // 11.37 静态字段也走 escapeHtml（与 renderEvalBox 同规则，避免以后漏改）
+  t(/esc\(title\)/.test(gameSrc) && /esc\(found\)/.test(gameSrc), '物证弹窗文本经 escapeHtml');
+  t(/esc\(sc\.rank\.label\)/.test(gameSrc) && /esc\(sc\.rank\.desc\)/.test(gameSrc),
+    '评级 badge/desc 经 escapeHtml');
+
+  // 11.38 预检工具默认上游与服务端一致（否则凭据发错服务商）
+  const preSrc = read('tools/precheck.mjs');
+  t(/api\.generalcompute\.com\/v1\/chat\/completions/.test(preSrc),
+    'precheck 默认上游 = generalcompute（与 app.py 一致）');
 }
 
 /* ============================================================

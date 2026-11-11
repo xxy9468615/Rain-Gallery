@@ -152,7 +152,7 @@ js/
   profiler.js       侦探能力侧写引擎（AI 报告 + 雷达图）
   audio.js          WebAudio 程序化音效
   storage.js        安全存储层（localStorage 异常时降级内存，无痕模式全程可玩）
-tools/              测试与校验脚本（check-syntax 语法/引用/注释配对 · proxy-base-test 165 断言 · contract-test · latency-test · judge-eval · test_proxy…）
+tools/              测试与校验脚本（check-syntax 语法/引用/注释配对 · proxy-base-test 175 断言 · contract-test · latency-test · judge-eval · test_proxy…）
 雨夜画廊-创作手记/   创作手记（含 NPC 决策闭环实测记录）
 ```
 

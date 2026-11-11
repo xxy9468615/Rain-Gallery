@@ -7,11 +7,14 @@ set -e
 ENV_FILE=""
 [ -f ./.env ] && ENV_FILE="./.env"
 [ -z "$ENV_FILE" ] && [ -f ./.evn ] && ENV_FILE="./.evn"
-if [ -z "$ENV_FILE" ]; then
+# RG_PROXY_SKIP_ENV_FILE=1 时允许完全没有 .env——纯外部环境变量启动
+# （CI / 平台 Secret 形态）。存在性检查必须认这个开关，否则会先 exit 1。
+if [ -z "$ENV_FILE" ] && [ "${RG_PROXY_SKIP_ENV_FILE:-0}" != "1" ]; then
   echo "✗ 未找到 .env 或 .evn。请创建 .env,内容:"
   echo '  RG_PROXY_API_BASE="https://.../v1/chat/completions"'
   echo '  RG_PROXY_TOKEN=ak-xxxx'
   echo '  RG_PROXY_MODEL=model-id'
+  echo '  或设 RG_PROXY_SKIP_ENV_FILE=1 完全使用外部环境变量启动'
   exit 1
 fi
 # .env 只补空、不覆盖：外部环境变量（CI / 平台 Secret / 命令行临时覆盖）优先。
