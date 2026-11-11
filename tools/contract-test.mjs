@@ -118,7 +118,7 @@ if (!SKIP_PROXY) {
     t(typeof content === 'string' && content.length > 0, 'chat 返回 choices[0].message.content',
       content ? `${content.length} 字` : r.text.slice(0, 80));
     // 契约：后端忽略前端 model / Authorization，免费通道模型由服务端决定
-    // 注意 maxTokens 给足：推理模型（spark-x2.6）会先消耗预算做思维链，
+    // 注意 maxTokens 给足：推理模型的思维链会先消耗预算，
     // 给 30 会被思考耗尽导致 content 为空、后端按 BAD_UPSTREAM 返回 502。
     // 上游偶发空 content 属已知抖动（实测 5 次中约 1 次），重试 3 次，
     // 只要有一次成功即证明"伪造参数未影响后端选型"。

@@ -152,7 +152,7 @@ js/
   profiler.js       侦探能力侧写引擎（AI 报告 + 雷达图）
   audio.js          WebAudio 程序化音效
   storage.js        安全存储层（localStorage 异常时降级内存，无痕模式全程可玩）
-tools/              测试与校验脚本（check-syntax 语法/引用/注释配对 · proxy-base-test 126 断言 · contract-test · latency-test · judge-eval · test_proxy…）
+tools/              测试与校验脚本（check-syntax 语法/引用/注释配对 · proxy-base-test 143 断言 · contract-test · latency-test · judge-eval · test_proxy…）
 雨夜画廊-创作手记/   创作手记（含 NPC 决策闭环实测记录）
 ```
 
@@ -195,8 +195,8 @@ tools/              测试与校验脚本（check-syntax 语法/引用/注释配
 | 环境变量 | 作用 | 示例 |
 |---|---|---|
 | `RG_PROXY_TOKEN` | 平台免费 Key（**必配**） | `ak-xxxxxxxx` |
-| `RG_PROXY_API_BASE` | 上游 OpenAI 兼容接口完整 URL | `https://maas-api.cn-huabei-1.xf-yun.com/v2/chat/completions` |
-| `RG_PROXY_MODEL` | 免费通道使用的模型 ID | `spark-x2.6` / `Qwen/Qwen3.8-Flash-Next` |
+| `RG_PROXY_API_BASE` | 上游 OpenAI 兼容接口完整 URL | `https://api.generalcompute.com/v1/chat/completions` |
+| `RG_PROXY_MODEL` | 免费通道使用的模型 ID | `gemma-4-31B-it`（备用 `gpt-oss-120b`） |
 | `RG_DAILY_CAP` | 全局每日调用上限（默认 20000） | `20000` |
 
 > 代理端**不记录对话内容**，仅按会话计数额（每局 150 次主调用 + 300 次裁判），
@@ -249,9 +249,15 @@ node tools/ai-test.mjs --e2e           # 只跑真实浏览器端到端
 | 契约 | `tools/contract-test.mjs` | `/api/chat`、`/api/judge`、`/api/status` 结构与错误码；伪造 `model`/`Authorization` 必须被忽略；judge 强制非流式；计额随调用增长；出站沙箱与 console 脱敏源码校验 |
 | 端到端 | `tools/e2e-real.mjs` | 真实浏览器加载游戏 → 收集 11 条物证 → 审讯 → **真实流式 AI 回复**，全程零 `pageerror` |
 
-> **上游特性说明**：推理模型（如 `spark-x2.6`）会先消耗 token 预算做思维链，
-> 因此 `max_tokens` 给太小会导致 `content` 为空、后端按 `BAD_UPSTREAM` 返回 502。
-> 契约测试已按生产语义给足预算并对偶发空响应重试。
+> **免费通道模型选型**（2026-11）：上游 `generalcompute.com` 在架 3 个模型经真实
+> `SUSPECT_PLAY` prompt 四轮压力实测 → `gemma-4-31B-it`（JSON 4/4 · 阶段自洽 3/4 ·
+> 均值 2.5s）设为默认，`gpt-oss-120b`（JSON 1/4 · 均值 4.2s）列为备用，
+> `minimax-m3.1-flash`（无 JSON 输出）下架。切换只需改 `.env` 的 `RG_PROXY_MODEL`。
+>
+> **上游特性说明**：部分模型会把 JSON 包进 markdown 代码块（gemma 实测如此），
+> 前端 `judgeCrack` / `parseDecision` 均已用 `/\{[\s\S]*\}/` 提取兜住；
+> 推理模型的思维链会先消耗 token 预算，`max_tokens` 给小会导致 `content` 为空、
+> 后端按 `BAD_UPSTREAM` 返回 502——契约测试已按生产语义给足预算并重试。
 >
 > 密钥只从 `.env` / 环境变量读取，**绝不打印、绝不写入日志或提交物**；
 > `.env` 与 `.venv-test/` 均已在 `.gitignore` 中。

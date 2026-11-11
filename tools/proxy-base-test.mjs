@@ -270,9 +270,13 @@ section('8 · 模型 ID 配置链与流式思维链剥离');
   t(coldOk, 'getModel() 冷启动（刷新后）不过滤自定义模型 ID', coldDetail.join(' · '));
   aiSettings.setModel(saved);   // 还原，避免污染后续模块读默认值
 
-  // 8.2 白名单里必须有免费通道在用的模型，否则下拉框选不到真实模型
-  t(MODEL_OPTIONS.some((m) => m.id === 'spark-x2.6'), 'MODEL_OPTIONS 含 spark-x2.6（免费通道在用）',
+  // 8.2 白名单里必须有免费通道默认在用的模型，否则下拉框选不到真实模型
+  //     （2026-11 选型后默认 = gemma-4-31B-it，备用 = gpt-oss-120b）
+  t(MODEL_OPTIONS.some((m) => m.id === 'gemma-4-31B-it'), 'MODEL_OPTIONS 含默认模型 gemma-4-31B-it',
     MODEL_OPTIONS.map((m) => m.id).join(' '));
+  t(MODEL_OPTIONS.some((m) => m.id === 'gpt-oss-120b'), 'MODEL_OPTIONS 含备用模型 gpt-oss-120b');
+  t(MODEL_OPTIONS.every((m) => ['gemma-4-31B-it', 'gpt-oss-120b'].includes(m.id)),
+    '不在架的模型已从 MODEL_OPTIONS 清理');
 
   // 8.3 思维链四种形态都不泄漏（含截断的未闭合标签）
   const OPEN = '<' + 'think' + '>';
@@ -398,6 +402,7 @@ section('11 · 第二轮评审修复回归');
   const appSrc = read('app.py');
   const gitattr = read('.gitattributes');
   const devSrc = read('tools/dev-server.sh');
+  const htmlSrc = read('index.html');
   const { createStreamSanitizer, withTimeout } = await import('../js/ai-client.js?v=3.6.0');
 
   // 11.1（Major）流式思维链：跨 chunk 有状态剥离，两处分支都接 sanitizer
@@ -524,9 +529,9 @@ section('11 · 第二轮评审修复回归');
   t(!/m\.index \+ body\.slice\(0, m\.index\)\.length/.test(read('tools/proxy-base-test.mjs')),
     'first() 偏移不再算成 2*m.index');
 
-  // 11.17 README 断言数与实际一致（126）
-  t(!/proxy-base-test (?:61|74|114|124|125) 断言/.test(read('README.md')), 'README 断言数已更新');
-  t(/proxy-base-test 126 断言/.test(read('README.md')), 'README 记录 126 断言');
+  // 11.17 README 断言数与实际一致（143）
+  t(!/proxy-base-test (?:61|74|114|124|125|126|137|139) 断言/.test(read('README.md')), 'README 断言数已更新');
+  t(/proxy-base-test 143 断言/.test(read('README.md')), 'README 记录 143 断言');
 
   // 11.18 .gitattributes 注释不再说"按平台还原"
   t(!/检出时按平台还原/.test(gitattr), '.gitattributes 注释已纠正');
@@ -552,6 +557,45 @@ section('11 · 第二轮评审修复回归');
       t(true, 'Python docstring 检查跳过（python3 不可用）');
     }
   }
+
+  // 11.20 UI 分层收ulaire：设置页三段 + 高级折叠
+  t(/class="settings-section"/g.test(htmlSrc) && (htmlSrc.match(/class="settings-section"/g) || []).length >= 3,
+    '设置页分为三段收纳');
+  t((htmlSrc.match(/class="settings-fold"/g) || []).length >= 4, '高级项收进折叠块');
+  t(!/#custom-key-block\.dim \{ opacity:/.test(cssSrc) && /#custom-key-block\.dim \{ display: none; \}/.test(cssSrc),
+    '免费模式下高级区整块隐藏（不再半透明铺开）');
+
+  // 11.21 合议庭进行中反馈（分步状态 + 不定进度 + 计时）
+  t(/function startJuryPending\(\)/.test(gameSrc), '合议庭有进行中可视化');
+  t(/jury-seal/.test(gameSrc) && /jury-step/.test(gameSrc) && /jury-progress/.test(gameSrc),
+    '等待态含状态分步与进度条');
+  t(/setInterval/.test(gameSrc) && /clearInterval\(timer\)/.test(gameSrc), '计时器可正确清理');
+  t(/const stopJuryPending = startJuryPending\(\)/.test(gameSrc)
+    && /stopJuryPending\(\);/.test(gameSrc), '启动与终止配对（成功/失败路径都收尾）');
+
+  // 11.22 终幕卷宗化：时间线节点卡片 + 真相导语 + 五维条
+  t(/className = 'tl-node'/.test(gameSrc) && /tl-dot/.test(gameSrc) && /tl-card/.test(gameSrc),
+    '时间线改为时间徽标 + 轨道卡片');
+  t(/className = 'lead'/.test(gameSrc), '真相首段作导语');
+  t(/class="dims-bars"/.test(gameSrc), '能力报告补五维数值条');
+  t(/function escapeHtml\(/.test(gameSrc) && /esc\(report\.title\)/.test(gameSrc),
+    'AI 报告文本经 escapeHtml 后再进 innerHTML');
+
+  // 11.23 免费通道模型选型（2026-11 实测）：默认 gemma · 备用 gpt-oss-120b
+  t(/id: 'gemma-4-31B-it'/.test(aiSrc) && /默认/.test(aiSrc.match(/id: 'gemma-4-31B-it'.*/)[0]),
+    'MODEL_OPTIONS 默认 = gemma-4-31B-it');
+  {
+    const block = aiSrc.slice(aiSrc.indexOf('export const MODEL_OPTIONS'));
+    const body = block.slice(0, block.indexOf('];'));
+    const ids = (body.match(/\{ id: '([^']+)'/g) || []).map((s) => s.replace(/\{ id: '|'$/g, ''));
+    t(ids.length === 2 && ids.includes('gpt-oss-120b'), 'MODEL_OPTIONS 只保留默认 + 备用',
+      ids.join(' '));
+  }
+
+  // 11.24 模型输出被 markdown 代码块包裹也能解析（gemma 实测如此）
+  t(/match\(\/\\\{\[\\s\\S\]\*\\\}\/\)/.test(saSrc), '裁判 JSON 从代码块中提取');
+  const stripFence = (t) => String(t).replace(/```json\s*|```/g, '').match(/\{[\s\S]*\}/);
+  t(!!stripFence('```json\n{"tag":"a","confidence":0.9}\n```'), '代码块包裹的 JSON 可被提取');
 }
 
 /* ============================================================

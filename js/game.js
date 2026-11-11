@@ -2085,7 +2085,8 @@ function renderScore(sc) {
   }
 
   // 骨架先落位（高度稳定，动画期间不跳动）
-  box.innerHTML = `<div class="score-rank" id="score-rank-badge" hidden>${sc.rank.label}</div>
+  box.innerHTML = `<div class="score-head">SCORE SHEET · 结案评分</div>
+    <div class="score-rank" id="score-rank-badge" hidden>${sc.rank.label}</div>
     <div class="score-rank-desc" id="score-rank-desc" hidden>${sc.rank.desc}</div>
     ${rows.map((r, i) => `
       <div class="score-row${r.penalty ? ' score-row-penalty' : ''}" id="score-row-${i}" data-ready="0">
@@ -2150,9 +2151,40 @@ function animateTotal(el, target) {
 function renderTruth() {
   const box = $('truth-box');
   box.classList.remove('hidden');
-  $('timeline').innerHTML = CASE.truth.timeline.map(([tm, ev]) =>
-    `<div class="timeline-item"><time>${tm}</time><span>${ev}</span></div>`).join('');
-  $('reveal').textContent = CASE.truth.reveal.join('\n\n');
+
+  // 时间线：时间徽标 + 轨道节点 + 事件卡片（逐条入场）
+  const tl = $('timeline');
+  tl.innerHTML = '';
+  (CASE.truth.timeline || []).forEach(([tm, ev], i) => {
+    const node = document.createElement('div');
+    node.className = 'tl-node';
+    node.style.setProperty('--i', String(i));
+    const time = document.createElement('time');
+    time.className = 'tl-time';
+    time.textContent = tm;
+    const rail = document.createElement('div');
+    rail.className = 'tl-rail';
+    const dot = document.createElement('span');
+    dot.className = 'tl-dot';
+    rail.append(dot);
+    const card = document.createElement('div');
+    card.className = 'tl-card';
+    const p = document.createElement('p');
+    p.textContent = ev;
+    card.append(p);
+    node.append(time, rail, card);
+    tl.append(node);
+  });
+
+  // 真相正文：首段作导语，其余分段叙述
+  const reveal = $('reveal');
+  reveal.innerHTML = '<div class="reveal-label">真相还原</div>';
+  (CASE.truth.reveal || []).forEach((text, i) => {
+    const p = document.createElement('p');
+    if (i === 0) p.className = 'lead';
+    p.textContent = text;
+    reveal.append(p);
+  });
 }
 
 /* ---------------- AI 侦探能力侧写报告 ---------------- */
@@ -2233,7 +2265,7 @@ async function renderEvaluationReport(sc) {
     // v3.2 · 仅 AI 模式：侧写报告不再回退本地模板，给出重试入口
     box.innerHTML = `<div class="eval-error">
       <div class="eval-title">🕵️ 侦探能力侧写报告</div>
-      <p>⚠ 能力侧写需要 AI 通道（${(err && (err.message || err.code)) || '未知错误'}）。</p>
+      <p>⚠ 能力侧写需要 AI 通道（${escapeHtml((err && (err.message || err.code)) || '未知错误')}）。</p>
       <p class="dim">审讯/评分/真相已全部保存，重新接入网络后可单独重试生成。</p>
       <button id="btn-eval-retry" class="primary-btn">↻ 重试生成侧写</button>
     </div>`;
@@ -2242,30 +2274,57 @@ async function renderEvaluationReport(sc) {
   }
 }
 
+/** HTML 转义：AI 生成的报告文本进入 innerHTML 前统一转义，避免破坏结构 */
+function escapeHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
+}
+
 function renderEvalBox(profile, report) {
   const box = $('eval-box');
   if (!box) return;
   box.classList.remove('hidden');
+  const esc = escapeHtml;
   const modeTag = '<span class="eval-mode ai">🤖 AI 深度侧写</span>';
-  const strengthsHtml = (report.strengths || []).map((s) => `
+  const strengthsHtml = (report.strengths || []).map((s, i) => `
     <div class="eval-strength">
-      <div class="es-name">长板 · ${s.name}</div>
-      <div class="es-text">${s.text}</div>
+      <div class="es-name"><span class="es-no">0${i + 1}</span>长板 · ${esc(s.name)}</div>
+      <div class="es-text">${esc(s.text)}</div>
     </div>`).join('');
+  const dimsHtml = (profile.labels || []).map((label, i) => {
+    const v = Math.max(0, Math.min(100, Number(profile.dims[i]) || 0));
+    return `
+      <div class="dim-row">
+        <span>${esc(label)}</span>
+        <i><b style="width:${Math.max(2, v)}%"></b></i>
+        <em>${v}</em>
+      </div>`;
+  }).join('');
   box.innerHTML = `
     <div class="eval-head">
-      <div class="eval-title">🕵️ 侦探能力侧写报告</div>
+      <div>
+        <div class="eval-kicker">DETECTIVE PROFILE · 结案能力档案</div>
+        <div class="eval-title">🕵️ 侦探能力侧写报告</div>
+      </div>
       ${modeTag}
     </div>
     <div class="eval-grid">
-      <div class="eval-radar">${radarSVG(profile)}</div>
-      <div class="eval-main">
-        <div class="eval-style"><span class="es-label">思维风格</span><b>${report.title}</b><span class="es-note">${report.note || ''}</span></div>
-        <div class="eval-strengths">${strengthsHtml}</div>
-        <div class="eval-blind"><span class="eb-label">盲区提醒</span>${report.blind || ''}</div>
-        <div class="eval-advice"><span class="ea-label">下一案建议</span>${report.advice || ''}</div>
+      <div class="eval-radar">
+        <div class="radar-label">五维能力画像</div>
+        ${radarSVG(profile)}
+        <div class="dims-bars">${dimsHtml}</div>
       </div>
-    </div>`;
+      <div class="eval-main">
+        <div class="eval-style"><span class="es-label">思维风格</span><b>${esc(report.title)}</b><span class="es-note">${esc(report.note || '')}</span></div>
+        <div class="eval-strengths">${strengthsHtml}</div>
+        <div class="eval-notes">
+          <div class="eval-blind"><span class="eb-label">盲区提醒</span>${esc(report.blind || '')}</div>
+          <div class="eval-advice"><span class="ea-label">下一案建议</span>${esc(report.advice || '')}</div>
+        </div>
+      </div>
+    </div>
+    <div class="eval-foot">由 AI 依据整局行为痕迹生成 · 与综合评分无关</div>`;
 }
 
 /* ---------------- v3.0 · 差异化尾声（按最终关系值触发） ---------------- */
@@ -2329,6 +2388,47 @@ function sanitizeJuryText(text) {
   return raw;
 }
 
+/**
+ * 合议庭进行中的可视化：分步状态 + 不定进度条 + 实时计时。
+ * 返回 stop()，拿到陈词后清掉计时器；失败路径也必须调用，避免定时器泄漏。
+ */
+function startJuryPending() {
+  const box = $('jury-box');
+  if (!box) return () => {};
+  box.innerHTML = `
+    <div class="jury-pending">
+      <div class="jury-seal" aria-hidden="true">⚖</div>
+      <div class="jury-pending-title">合议庭正在评议</div>
+      <div class="jury-steps" role="status" aria-live="polite">
+        <span class="jury-step active">核对证据链</span>
+        <span class="jury-step">还原时间线</span>
+        <span class="jury-step">合议判定</span>
+      </div>
+      <div class="jury-progress" aria-hidden="true"><i></i></div>
+      <div class="jury-elapsed">已等待 <b>0.0</b>s · 结案陈词由 AI 现场生成</div>
+    </div>`;
+  const steps = Array.from(box.querySelectorAll('.jury-step'));
+  const elapsedEl = box.querySelector('.jury-elapsed b');
+  const t0 = performance.now();
+  let current = 0;
+  const timer = setInterval(() => {
+    const sec = (performance.now() - t0) / 1000;
+    if (elapsedEl) elapsedEl.textContent = sec.toFixed(1);
+    // 每 2.6s 点亮下一步（拿不到真实进度，用节奏给玩家「仍在推进」的确定感）
+    const next = Math.min(steps.length - 1, Math.floor(sec / 2.6));
+    if (next > current) {
+      steps[current].classList.remove('active');
+      steps[current].classList.add('done');
+      current = next;
+      steps[current].classList.add('active');
+    }
+  }, 100);
+  return () => {
+    clearInterval(timer);
+    if (elapsedEl) elapsedEl.textContent = ((performance.now() - t0) / 1000).toFixed(1);
+  };
+}
+
 async function runFinal() {
   showPhase('final');
   const accusedSuspect = suspectById(state.accused);
@@ -2341,6 +2441,7 @@ async function runFinal() {
     const s = suspectById(id);
     digestParts.push(`${s.name}：被戳穿 ${st.pressure} 次${st.confessed ? '，已完整坦白' : `，情绪${stageOf(st)}`}，信任 ${st.trust}、敌意 ${st.hostility}`);
   });
+  const stopJuryPending = startJuryPending();
   let jury;
   try {
     jury = await juryVerdict({
@@ -2353,6 +2454,7 @@ async function runFinal() {
       epilogue: state.epilogue,
     });
   } catch (err) {
+    stopJuryPending();
     // v3.2 · 仅 AI 模式：结案陈词需 AI，失败则退回指认幕并提示重试
     showPhase('accuse');
     const msg = (err && err.message) || 'AI 通道不可用';
@@ -2360,6 +2462,8 @@ async function runFinal() {
     return;
   }
 
+  stopJuryPending();
+  $('jury-box').innerHTML = '';
   $('final-title').textContent = jury.isCorrect ? '真相只有一个' : '陪审团合议完毕';
   audio.verdict();
   const sc = computeScore(jury.isCorrect);

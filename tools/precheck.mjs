@@ -6,7 +6,7 @@
  *   1. .env 存在且含 RG_PROXY_TOKEN / RG_PROXY_MODEL / RG_PROXY_API_BASE
  *   2. 直连官方端点验证 Token（不经过本作品后端，排除层间干扰）
  *   3. 验证 RG_PROXY_MODEL 是否为有效模型 ID（历史上踩过
- *      "Invalid model id: spark-x2.6" 导致全通道 502）
+ *      "Invalid model id" 导致全通道 502——换上游服务商后尤其要重跑）
  *   4. 本作品后端 /api/status 是否报 available=true
  *
  * 用法：

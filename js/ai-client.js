@@ -183,15 +183,20 @@ export function validateEndpointUrl(url) {
 export const MOCK_AI = typeof location !== 'undefined'
   && new URLSearchParams(location.search).has('mockai');
 
+/**
+ * 可选手搓模型（仅「自定义 Key」模式可选）。
+ * ------------------------------------------------------------
+ * 2026-11 实测选型：免费通道上游 generalcompute.com 在架 3 个模型，
+ * 用真实 SUSPECT_PLAY prompt 各跑 4 轮压力场景：
+ *   gemma-4-31B-it      JSON 4/4 · 阶段自洽 3/4 · 均值 2.5s  ← 默认
+ *   gpt-oss-120b        JSON 1/4 · 均值 4.2s（出现过 13s）  ← 备用
+ *   minimax-m3.1-flash  无 JSON 输出
+ * 所以默认只列 gemma，备用列 gpt-oss-120b；其余一概下架，
+ * 玩家也可在「自定义模型 ID…」手填任意 ID（存什么读什么）。
+ */
 export const MODEL_OPTIONS = [
-  { id: 'Qwen/Qwen3.8-Flash-Next', label: 'Qwen3.8-Flash-Next（推荐·极速免费）' },
-  { id: 'Qwen/Qwen3.5-27B', label: 'Qwen3.5-27B（高精度推理）' },
-  { id: 'deepseek-ai/DeepSeek-V4.1-Flash-1017', label: 'DeepSeek-V4.1-Flash' },
-  { id: 'ZhipuAI/GLM-4.7-Flash', label: 'GLM-4.7-Flash' },
-  { id: 'MiniMax/MiniMax-M1-80k', label: 'MiniMax-M1-80k' },
-  // 讯飞星火：app.py 的默认上游之一是它，实测思维链较长、
-  // 台词语 JSON 需给足 max_tokens（JUDGE_MAX_TOKENS=400 才够）。
-  { id: 'spark-x2.6', label: '讯飞星火 spark-x2.6（当前免费通道在用）' },
+  { id: 'gemma-4-31B-it', label: 'gemma-4-31B-it（默认 · 免费通道在用）' },
+  { id: 'gpt-oss-120b', label: 'gpt-oss-120b（备用 · 默认端点抖动时切换）' },
 ];
 
 export const STORAGE_MODE = {

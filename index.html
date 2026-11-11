@@ -154,16 +154,26 @@
 
     <!-- 终幕：结案 -->
     <section id="phase-final" class="phase hidden">
-      <h2 class="section-title" id="final-title">陪审团合议中…</h2>
-      <div id="jury-box" class="jury-box"></div>
+      <header class="final-head">
+        <div class="final-kicker">CASE FILE · RAIN GALLERY</div>
+        <h2 class="section-title" id="final-title">陪审团合议中…</h2>
+        <div class="final-rule"></div>
+      </header>
+      <div id="jury-box" class="jury-box" aria-live="polite"></div>
       <div id="score-box" class="score-box hidden"></div>
       <div id="epilogue-box" class="epilogue-box hidden"></div>
       <div id="eval-box" class="eval-box hidden"></div>
-      <div id="truth-box" class="truth-box hidden">
-        <h3>📜 案件时间线（真相还原）</h3>
-        <div id="timeline"></div>
-        <div id="reveal"></div>
-      </div>
+
+      <section id="truth-box" class="truth-box hidden" aria-labelledby="truth-title">
+        <div class="file-head">
+          <span class="file-tag">结案卷宗 · 真相还原</span>
+          <h3 id="truth-title">案件时间线</h3>
+          <p>依据物证与审讯记录还原那一夜的真实经过</p>
+        </div>
+        <div id="timeline" class="timeline"></div>
+        <div id="reveal" class="reveal"></div>
+      </section>
+
       <div class="invest-footer">
         <button id="btn-restart" class="ghost-btn">↻ 重玩本局</button>
       </div>
@@ -204,12 +214,18 @@
     <div class="modal-card modal-card-lg">
       <div class="modal-head"><h3 id="modal-settings-title">⚙️ AI 嫌疑人设置与安全保障</h3><button class="modal-close" data-close="modal-settings" aria-label="关闭设置">✕</button></div>
       <div class="settings-body">
+        <p class="settings-intro">默认<strong>免费内置</strong>，零配置即可开始；需要接入自己的 Key 或自建网关时，再切换到「自定义」。</p>
+
+        <section class="settings-section">
+          <div class="settings-section-head">
+            <span class="ss-index">01</span>
+            <div><h4>接口来源</h4><p>免费通道由本站后端转发；自定义 Key 由浏览器直连。</p></div>
+          </div>
 
         <!-- v3.0 · AI 接口来源选择（默认免费内置） -->
         <div class="field-group">
-          <label class="field-label">AI 接口来源</label>
           <div class="storage-mode-row">
-            <label class="radio-card">
+            <label class="radio-card source-card">
               <input type="radio" name="endpoint-mode" value="free" id="endpoint-free" checked>
               <div class="radio-text">
                 <b>🎁 免费内置（默认 · 零配置）</b>
@@ -217,7 +233,7 @@
                 <span id="free-channel-status" class="free-status">…</span>
               </div>
             </label>
-            <label class="radio-card">
+            <label class="radio-card source-card">
               <input type="radio" name="endpoint-mode" value="custom" id="endpoint-custom">
               <div class="radio-text">
                 <b>🔑 自定义 Key（一人一 Key · 浏览器直连）</b>
@@ -226,24 +242,38 @@
             </label>
           </div>
         </div>
+        </section>
 
         <!-- v3.6 · 免费通道代理基址：两种接口来源共用，静态托管时指向独立后端。
-             必须放在 #custom-key-block 之外——该容器在免费模式下带 .dim，
-             其 .text-input 会被 pointer-events:none 禁用，免费通道玩家就改不了基址。 -->
-        <label class="field-label" for="settings-proxy-base">免费通道代理基址（默认同源 · 静态托管填后端地址）</label>
-        <div class="token-input-row">
-          <input id="settings-proxy-base" type="url" class="text-input"
-            placeholder="留空 = 同源 /api/*；独立后端填 https://your-api.onrender.com" autocomplete="off" spellcheck="false">
-        </div>
-        <p class="hint-line" id="proxy-base-hint" style="text-align:left;margin:6px 0 0;">
-          两种接口来源共用，切换不影响此设置。同源部署（魔搭创空间等）留空即可；若前端与后端分域部署
-          （前端在 GitHub Pages、后端在 Render/Railway），填后端的<b>根地址</b>即可跨域调用，服务端需开启 CORS。
-        </p>
+             必须放在 #custom-key-block 之外——该容器在免费模式下隐藏，
+             放进去免费通道玩家就改不了基址。 -->
+        <details class="settings-fold">
+          <summary>高级 · 独立后端部署（静态托管时填写）</summary>
+          <div class="settings-fold-body">
+            <label class="field-label" for="settings-proxy-base">免费通道代理基址</label>
+            <div class="token-input-row">
+              <input id="settings-proxy-base" type="url" class="text-input"
+                placeholder="留空 = 同源 /api/*；独立后端填 https://your-api.onrender.com" autocomplete="off" spellcheck="false">
+            </div>
+            <p class="hint-line" id="proxy-base-hint" style="text-align:left;margin:6px 0 0;">
+              两种接口来源共用，切换不影响此设置。同源部署留空即可；前后端分域部署时填后端<b>根地址</b>，服务端需开启 CORS。
+            </p>
+          </div>
+        </details>
 
         <!-- 自定义 Key 配置区（选择「自定义」时激活） -->
         <div id="custom-key-block">
 
+        <section class="settings-section">
+          <div class="settings-section-head">
+            <span class="ss-index">02</span>
+            <div><h4>安全与存储</h4><p>0 日志承诺与 Token 的本地加密策略。</p></div>
+          </div>
+
         <!-- 0 日志与加密技术白皮书承诺（适用于自定义 Key 直连模式） -->
+        <details class="settings-fold">
+          <summary>🛡 安全与隐私保障（0 日志 / 本地加密）</summary>
+          <div class="settings-fold-body">
         <div class="security-card">
           <div class="sec-badge">🛡️ 0 日志安全保障 · WebCrypto 加密架构（自定义 Key 模式）</div>
           <div class="sec-grid">
@@ -269,19 +299,23 @@
             </div>
           </div>
         </div>
+          </div>
+        </details>
 
+        <details class="settings-fold">
+          <summary>高级 · 存储方式与自动销毁</summary>
+          <div class="settings-fold-body">
         <!-- 存储模式选择 -->
         <div class="field-group">
-          <label class="field-label">Token 存储技术模式</label>
           <div class="storage-mode-row">
-            <label class="radio-card">
+            <label class="radio-card source-card">
               <input type="radio" name="storage-mode" value="encrypted" id="mode-encrypted" checked>
               <div class="radio-text">
-                <b>本地硬件加密（WebCrypto AES-GCM-256 · 推荐）</b>
+                <b>本地加密存储<span class="badge-rec">推荐</span></b>
                 <span>跨刷新免输：经浏览器 AES-256 算法加盐加密，存储中仅存不可读密文。</span>
               </div>
             </label>
-            <label class="radio-card">
+            <label class="radio-card source-card">
               <input type="radio" name="storage-mode" value="memory" id="mode-memory">
               <div class="radio-text">
                 <b>纯内存驻留（阅后即焚 · 极客模式）</b>
@@ -293,30 +327,29 @@
 
         <!-- 自动销毁策略（多人密钥安全 · 玩家自选时机） -->
         <div class="field-group">
-          <label class="field-label">Token 自动销毁策略（一人一 Key · 0 日志 · 0 保留）</label>
           <div class="storage-mode-row">
-            <label class="radio-card">
+            <label class="radio-card source-card">
               <input type="radio" name="destroy-policy" value="off" checked>
               <div class="radio-text">
                 <b>不自动销毁（默认）</b>
                 <span>Token 保留至手动销毁；加密模式下跨刷新免重输，随时可手动销毁。</span>
               </div>
             </label>
-            <label class="radio-card">
+            <label class="radio-card source-card">
               <input type="radio" name="destroy-policy" value="idle30m">
               <div class="radio-text">
                 <b>无操作 30 分钟自动销毁</b>
                 <span>检测到 30 分钟无任何操作即自动 Zero-Fill 销毁（0 保留），挂机离开更安心。</span>
               </div>
             </label>
-            <label class="radio-card">
+            <label class="radio-card source-card">
               <input type="radio" name="destroy-policy" value="caseEnd">
               <div class="radio-text">
                 <b>结案后自动销毁</b>
                 <span>本案结案评分与侧写报告落盘后即刻销毁，一案一 Key，最高安全标准。</span>
               </div>
             </label>
-            <label class="radio-card">
+            <label class="radio-card source-card">
               <input type="radio" name="destroy-policy" value="pageClose">
               <div class="radio-text">
                 <b>关闭页面即焚</b>
@@ -325,6 +358,15 @@
             </label>
           </div>
         </div>
+          </div>
+        </details>
+        </section>
+
+        <section class="settings-section">
+          <div class="settings-section-head">
+            <span class="ss-index">03</span>
+            <div><h4>连接配置</h4><p>填写 Token 与模型；端点与白名单在高级选项里。</p></div>
+          </div>
 
         <label class="field-label" for="settings-token">API Token（一人一 Key）</label>
         <div class="token-input-row">
@@ -332,6 +374,9 @@
           <button id="btn-toggle-token-vis" class="chip-btn" type="button" title="查看/隐藏明文">👁</button>
         </div>
 
+        <details class="settings-fold">
+          <summary>高级 · 端点与域名白名单</summary>
+          <div class="settings-fold-body">
         <!-- v3.5 · 自定义端点（可对接任意 OpenAI 兼容服务，不再写死单一厂商） -->
         <label class="field-label" for="settings-endpoint">接口端点（OpenAI 兼容 · 默认魔搭官方）</label>
         <div class="token-input-row">
@@ -351,6 +396,8 @@
         <p class="hint-line" id="whitelist-hint" style="text-align:left;margin:6px 0 0;">
           填写后，只有列表内的域名可通过校验——防止配置被篡改后把 Token 发往陌生地址。
         </p>
+          </div>
+        </details>
 
         <label class="field-label" for="settings-model">扮演模型</label>
         <select id="settings-model" class="text-input"></select>
@@ -387,6 +434,7 @@
           </p>
         </details>
 
+        </section>
         </div><!-- /custom-key-block -->
 
         <div class="settings-actions">
