@@ -35,6 +35,22 @@ const section = (name) => console.log(`\n\x1b[36m▌${name}\x1b[0m`);
 
 const read = (rel) => readFileSync(resolve(ROOT, rel), 'utf8');
 
+/* ---- Python 解释器探测（Windows 常只有 python 没有 python3） ---- */
+let _pyCmd = null;
+let _pyProbed = false;
+function pythonCmd() {
+  if (_pyProbed) return _pyCmd;
+  _pyProbed = true;
+  for (const cmd of ['python3', 'python']) {
+    try {
+      execFileSync(cmd, ['-c', 'print(1)'], { stdio: 'ignore' });
+      _pyCmd = cmd;
+      break;
+    } catch (e) { /* 下一个 */ }
+  }
+  return _pyCmd;
+}
+
 /* ============================================================
  * 1. 基址校验矩阵（真跑 js/ai-client.js 的导出函数）
  * ============================================================ */
@@ -215,8 +231,11 @@ section('7 · .env 引号剥离（上游 502 UnsupportedProtocol 回归）');
   ];
   let allOk = true;
   const got = [];
-  for (const [raw, want] of cases) {
-    const out = execFileSync('python3', ['-c', `
+  const PY = pythonCmd();
+  if (!PY) {
+    console.log('  \x1b[33m⚠\x1b[0m _strip_quotes 测试跳过（未找到 python3/python）');
+  } else for (const [raw, want] of cases) {
+    const out = execFileSync(PY, ['-c', `
 import sys
 def _strip_quotes(v: str) -> str:
     v = v.strip()
@@ -228,7 +247,10 @@ print(_strip_quotes(sys.argv[1]))
     got.push(`${JSON.stringify(raw)} → ${JSON.stringify(out)}`);
     if (out !== want) allOk = false;
   }
-  t(allOk, '_strip_quotes 语义正确（成对引号才剥，单引号/空值不动）', got.join(' · '));
+  // 未跳过才断言：PY 为空时 allOk 仍是初值 true，无条件断言会伪装成通过（假绿）
+  if (PY) {
+    t(allOk, '_strip_quotes 语义正确（成对引号才剥，单引号/空值不动）', got.join(' · '));
+  }
 
   // app.py 自己也该对上游 URL 做防御性 strip：即便有人绕过加载器直接导出裸引号值
   t(/os\.environ\.get\("RG_PROXY_API_BASE"[^)]*\)\.strip\(\)/.test(read('app.py')),
@@ -606,7 +628,9 @@ section('11 · 第二轮评审修复回归');
   // CodeRabbit 抓到，改为注入必然崩溃的脚本做行为验证。
   const runDocstringScan = (script) => {
     try {
-      return { missing: execFileSync('python3', ['-c', script], { cwd: ROOT, encoding: 'utf8' }).trim() };
+      const cmd = pythonCmd();
+      if (!cmd) return { skipped: true };   // 两处调用统一走探测：Windows 只有 python
+      return { missing: execFileSync(cmd, ['-c', script], { cwd: ROOT, encoding: 'utf8' }).trim() };
     } catch (e) {
       if (e && e.code === 'ENOENT') return { skipped: true };   // 解释器缺失 → 跳过
       const tail = String((e && (e.stderr || e.message)) || e).trim().split('\n').slice(-1)[0];
@@ -760,9 +784,15 @@ section('11 · 第二轮评审修复回归');
 {
   const readme = read('README.md');
   const m = readme.match(/proxy-base-test (\d+) 断言/);
+  // 无 python 环境会跳过 3~4 条（_strip_quotes、docstring 扫描及其自测），
+  // 因此允许"少于 README"，只不许凭空多出来。
   const actual = pass + fail + 1;
-  t(!!m && Number(m[1]) === actual, 'README 断言数与运行时一致',
-    m ? `README=${m[1]} 实际=${actual}（请把 README 改成 ${actual}）` : 'README 未记录断言数');
+  const hasPython = !!pythonCmd();
+  t(!!m && (hasPython ? Number(m[1]) === actual : Number(m[1]) >= actual),
+    'README 断言数与运行时一致',
+    m
+      ? `README=${m[1]} 实际=${actual}${hasPython ? '' : '（无 python，跳过若干条，允许少于 README）'}`
+      : 'README 未记录断言数');
 }
 
 console.log(`\n\x1b[1m合计\x1b[0m  \x1b[32m通过 ${pass}\x1b[0m · \x1b[31m失败 ${fail}\x1b[0m`);
