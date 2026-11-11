@@ -2429,7 +2429,9 @@ function startJuryPending() {
       current = next;
       steps[current].classList.add('active');
     }
-  }, 100);
+  }, 250);   // 250ms 足够：秒数显示一位小数，步骤按经过时间（2.6s/步）推进，
+             // 与刷新频率解耦。100ms 时 90% 的 tick 只是重复写同一个字符串
+             // （CodeRabbit 建议降频，低风险纯收益）
   return () => {
     clearInterval(timer);
     if (elapsedEl) elapsedEl.textContent = ((performance.now() - t0) / 1000).toFixed(1);

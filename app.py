@@ -24,6 +24,7 @@
 import os
 import time
 from datetime import date
+from urllib.parse import urlparse
 
 import httpx
 import uvicorn
@@ -43,16 +44,40 @@ PROXY_MODEL = os.environ.get("RG_PROXY_MODEL", "gemma-4-31B-it").strip()
 # 魔搭令牌会被发往第三方端点（CodeRabbit 抓到：凭据误用 + 预检工具默认值不一致）。
 # 换回魔搭上游时改 API_BASE 即可，或用 MODELSCOPE_FALLBACK_TOKEN=1 显式允许。
 def _modelscope_fallback_ok() -> bool:
-    """是否允许把 MODELSCOPE_SDK_TOKEN 当作免费通道 Key。"""
+    """是否允许把 MODELSCOPE_SDK_TOKEN 当作免费通道 Key。
+
+    必须按 URL 主机名判断，不能用字符串包含——`modelscope.cn.attacker.example`
+    也会包含 "modelscope.cn"，那把 SDK Token 发去攻击者主机（CodeRabbit 抓到）。
+    """
     if os.environ.get("MODELSCOPE_FALLBACK_TOKEN") == "1":
         return True
-    return "modelscope.cn" in API_BASE
+    try:
+        parsed = urlparse(API_BASE)
+    except Exception:
+        return False
+    if parsed.scheme != "https":
+        return False
+    host = (parsed.hostname or "").lower()
+    return host == "modelscope.cn" or host.endswith(".modelscope.cn")
 
 
 PROXY_TOKEN = (os.environ.get("RG_PROXY_TOKEN")
                or (os.environ.get("MODELSCOPE_SDK_TOKEN") if _modelscope_fallback_ok() else "")
                or "").strip()
-DAILY_CAP = max(1, int(os.environ.get("RG_DAILY_CAP", "20000")))
+# 空串也要兜住：直接 int("") 会在 import 阶段 ValueError 崩掉整个服务
+# （外部传 `RG_DAILY_CAP=` 空值的场景真实存在）。
+def _int_env(name: str, default: int, lo: int = 1) -> int:
+    """读整数环境变量；非数字 / 空 / 越界一律回落默认值。"""
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return max(lo, int(float(raw)))
+    except (TypeError, ValueError):
+        return default
+
+
+DAILY_CAP = _int_env("RG_DAILY_CAP", 20000)
 
 SESSION_CAP = 150          # 每局（会话）主调用上限：一局问答约 30~60 次，余量充足
 JUDGE_SESSION_CAP = 300    # 裁判调用独立额度（不占 150 主额度），仅防滥用

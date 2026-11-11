@@ -431,6 +431,42 @@ section('11 · 第二轮评审修复回归');
     const dangling = run(['你好<']);
     t(dangling === '你好<', 'flush 放行末尾未闭合的 <',
       `实际 ${JSON.stringify(dangling)}`);
+
+    // 无配对开标签的闭标签会作为字面文本出现——这是已知边界（注释里列过），
+    // 固化成断言，防止将来有人"顺手修好"它时破坏累积串语义。
+    const orphanClose = run(['正文', '</' + 'think' + '>']);
+    t(orphanClose === '正文</' + 'think' + '>', '无配对开标签的闭标签按字面处理',
+      `实际 ${JSON.stringify(orphanClose)}`);
+
+    // 等价性：同一输入按不同 chunk 切分，输出必须一致。
+    // 这是守住 sanitizer 语义的最强防线——曾想改成"只扫尾部"的增量版，
+    // 单测全过却在随机切分下 112/200 组不一致（CodeRabbit 的谨慎是对的）。
+    const seededRandom = (seed) => {          // 确定性 PRNG：测试不靠运气
+      let s = (seed * 9301 + 49297) % 233280;
+      return () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
+    };
+    let mismatch = 0; let firstBad = '';
+    for (let i = 0; i < 200; i++) {
+      const rnd = seededRandom(i + 1);
+      const n = 1 + Math.floor(rnd() * 30);
+      let src = '';
+      for (let j = 0; j < n; j++) {
+        const r = rnd();
+        src += r < 0.10 ? '<' + 'think' + '想'
+          : r < 0.20 ? ' worldly  ' + '</' + 'think' + '>'
+          : r < 0.28 ? ' '
+          : `词${j} `;
+      }
+      const whole = run([src]);                       // 整串一次
+      const perChar = run([...src]);                  // 最苛刻：逐字符
+      const halves = run([src.slice(0, Math.ceil(src.length / 2)),
+                          src.slice(Math.ceil(src.length / 2))]);
+      if (whole !== perChar || whole !== halves) {
+        mismatch += 1;
+        if (!firstBad) firstBad = `src=${JSON.stringify(src)} 整串=${JSON.stringify(whole)} 逐字=${JSON.stringify(perChar)}`;
+      }
+    }
+    t(mismatch === 0, 'sanitizer 输出与 chunk 切分无关（200 组随机）', firstBad);
   }
 
   // 11.1c（第四轮）超时必须中止底层请求，避免占死 LOAD_GATE 槽位
@@ -528,9 +564,8 @@ section('11 · 第二轮评审修复回归');
   t(!/m\.index \+ body\.slice\(0, m\.index\)\.length/.test(read('tools/proxy-base-test.mjs')),
     'first() 偏移不再算成 2*m.index');
 
-  // 11.17 README 断言数与实际一致（175）
-  t(!/proxy-base-test (?:61|74|114|124|125|126|137|139|143|151|156|159|165) 断言/.test(read('README.md')), 'README 断言数已更新');
-  t(/proxy-base-test 175 断言/.test(read('README.md')), 'README 记录 175 断言');
+  // 11.17 README 断言数黑名单已停用：写死数字 + 历史黑名单每次加断言都要同步改，
+  // 漏改时报的红与功能无关。改到文件末尾与运行时 pass+fail 总数对账。
 
   // 11.18 .gitattributes 注释不再说"按平台还原"
   t(!/检出时按平台还原/.test(gitattr), '.gitattributes 注释已纠正');
@@ -553,6 +588,18 @@ section('11 · 第二轮评审修复回归');
   t(/MODELSCOPE_SDK_TOKEN/.test(appSrc), 'app.py Token 回退读 MODELSCOPE_SDK_TOKEN');
 
   // 11.29 Python 函数 docstring 全覆盖（CodeRabbit Docstring Coverage 门槛）
+  // 扫描逻辑抽成函数：既跑真实扫描，也用来验证 catch 分支真会把失败记下来。
+  // 早先是自指正则（在测试文件里搜自己的字符串），恒为真、守不住行为——
+  // CodeRabbit 抓到，改为注入必然崩溃的脚本做行为验证。
+  const runDocstringScan = (script) => {
+    try {
+      return { missing: execFileSync('python3', ['-c', script], { cwd: ROOT, encoding: 'utf8' }).trim() };
+    } catch (e) {
+      if (e && e.code === 'ENOENT') return { skipped: true };   // 解释器缺失 → 跳过
+      const tail = String((e && (e.stderr || e.message)) || e).trim().split('\n').slice(-1)[0];
+      return { error: tail };                                   // 扫描崩溃 → 记失败
+    }
+  };
   {
     const scan = [
       'import ast, pathlib',
@@ -566,19 +613,14 @@ section('11 · 第二轮评审修复回归');
       '            bad.append(f"{p}:{n.name}")',
       'print(len(bad))',
     ].join('\n');
-    try {
-      const missing = execFileSync('python3', ['-c', scan], { cwd: ROOT, encoding: 'utf8' }).trim();
-      t(missing === '0', 'Python 函数 docstring 全覆盖', missing === '0' ? '' : `缺失 ${missing} 个`);
-    } catch (e) {
-      // 只有解释器缺失才算跳过；扫描脚本本身崩溃（语法错误/编码错误/非零退出）
-      // 必须记失败——否则这道门槛会显示绿色却什么也没查（CodeRabbit 抓到）。
-      if (e && e.code === 'ENOENT') {
-        console.log('  \x1b[33m⚠\x1b[0m Python docstring 检查跳过（python3 不可用）');
-      } else {
-        const tail = String((e && (e.stderr || e.message)) || e).trim().split('\n').slice(-1)[0];
-        t(false, 'Python docstring 扫描执行失败', tail);
-      }
-    }
+    const r = runDocstringScan(scan);
+    if (r.skipped) console.log('  \x1b[33m⚠\x1b[0m Python docstring 检查跳过（python3 不可用）');
+    else t(r.missing === '0', 'Python 函数 docstring 全覆盖',
+      r.error || (r.missing === '0' ? '' : `缺失 ${r.missing} 个`));
+  }
+  {
+    const r = runDocstringScan('def broken(:');
+    t(!r.skipped && !!r.error, '扫描崩溃时记失败而非静默跳过', r.error || '（被吞掉了）');
   }
 
   // 11.20 UI 分层收ulaire：设置页三段 + 高级折叠
@@ -660,8 +702,12 @@ section('11 · 第二轮评审修复回归');
   t(!/r\.ok \?/.test(gameSrc), '不再读不存在的 r.ok');
 
   // 11.34 魔搭 SDK Token 不会在第三方端点被回退（凭据误用防护）
-  t(/_modelscope_fallback_ok/.test(appSrc) && /"modelscope\.cn" in API_BASE/.test(appSrc),
-    'MODELSCOPE_SDK_TOKEN 仅在上游为魔搭时回退');
+  // 必须按 URL 主机名判断：字符串包含会被 modelscope.cn.attacker.example 绕过
+  // （CodeRabbit 抓到）。断言的是"用 urlparse + hostname"，不是那个漏洞写法。
+  t(/_modelscope_fallback_ok/.test(appSrc) && /urlparse/.test(appSrc)
+    && /parsed\.hostname/.test(appSrc),
+    'Token 回退按 URL 主机名判断（不被相似域名绕过）');
+  t(!/"modelscope\.cn" in API_BASE/.test(appSrc), '已移除字符串包含判断');
   t(!/os\.environ\.get\("MODELSCOPE_SDK_TOKEN"\) or ""/.test(appSrc),
     'Token 回退不再是无条件 or');
 
@@ -670,8 +716,9 @@ section('11 · 第二轮评审修复回归');
 
   // 11.36 docstring 扫描失败必须记失败，不能吞掉算通过
   const selfSrc = read('tools/proxy-base-test.mjs');
-  t(/e\.code === 'ENOENT'/.test(selfSrc), 'docstring 检查区分「解释器缺失」与「扫描失败」');
-  t(/t\(false, 'Python docstring 扫描执行失败'/.test(selfSrc), '扫描失败记 red 而非跳过');
+  // （11.36 的两条自指正则已删除：它们在测试文件里搜自己的字符串，恒为真、
+  //   守不住行为。改为上面注入崩溃脚本的行为验证。）
+  // README 的断言数改到文件末尾与运行时 pass+fail 对账，不再写死数字。
 
   // 11.37 静态字段也走 escapeHtml（与 renderEvalBox 同规则，避免以后漏改）
   t(/esc\(title\)/.test(gameSrc) && /esc\(found\)/.test(gameSrc), '物证弹窗文本经 escapeHtml');
@@ -687,6 +734,17 @@ section('11 · 第二轮评审修复回归');
 /* ============================================================
  * 汇总
  * ============================================================ */
+/* ---------- README 断言数对账（运行时总数，不写死数字） ----------
+ * 放在所有断言之后：加减断言无需同步改任何固定值，README 对不上就报红。
+ * +1 是把这条对账断言自己算进去（它也会计入 pass），否则永远差一。 */
+{
+  const readme = read('README.md');
+  const m = readme.match(/proxy-base-test (\d+) 断言/);
+  const actual = pass + fail + 1;
+  t(!!m && Number(m[1]) === actual, 'README 断言数与运行时一致',
+    m ? `README=${m[1]} 实际=${actual}（请把 README 改成 ${actual}）` : 'README 未记录断言数');
+}
+
 console.log(`\n\x1b[1m合计\x1b[0m  \x1b[32m通过 ${pass}\x1b[0m · \x1b[31m失败 ${fail}\x1b[0m`);
 if (fail) {
   console.log('\n\x1b[31m失败项：\x1b[0m');

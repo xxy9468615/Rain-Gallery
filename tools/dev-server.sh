@@ -31,11 +31,14 @@ else
   set -a
   . "$ENV_FILE"
   set +a
-  # 已显式设置的外部变量压回，避免被 .env 覆盖
+  # 已显式设置的外部变量压回，避免被 .env 覆盖。
+  # RG_DAILY_CAP 要额外判空：外部传空串（如 `RG_DAILY_CAP= cmd`）时若也压回，
+  # app.py 的 int("") 会在 import 阶段崩溃——空值就让 .env 的有效配置留着。
+  # CORS_ALLOWED_ORIGINS 的显式空值是有意义的（= 拒绝跨域），照旧压回。
   [ "$_EXT_TOKEN" != "__unset__" ] && export RG_PROXY_TOKEN="$_EXT_TOKEN"
   [ "$_EXT_BASE"  != "__unset__" ] && export RG_PROXY_API_BASE="$_EXT_BASE"
   [ "$_EXT_MODEL" != "__unset__" ] && export RG_PROXY_MODEL="$_EXT_MODEL"
-  [ "$_EXT_CAP"   != "__unset__" ] && export RG_DAILY_CAP="$_EXT_CAP"
+  [ -n "$_EXT_CAP" ] && [ "$_EXT_CAP" != "__unset__" ] && export RG_DAILY_CAP="$_EXT_CAP"
   [ "$_EXT_CORS"  != "__unset__" ] && export CORS_ALLOWED_ORIGINS="$_EXT_CORS"
   unset _EXT_TOKEN _EXT_BASE _EXT_MODEL _EXT_CAP _EXT_CORS
 fi

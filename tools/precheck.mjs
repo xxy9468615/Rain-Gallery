@@ -11,7 +11,7 @@
  *
  * 用法：
  *   node tools/precheck.mjs                        # 用 .env
- *   MODELSCOPE_TOKEN=ms-xxx node tools/precheck.mjs
+ *   上游是魔搭时可另给 MODELSCOPE_TOKEN=ms-xxx（其他上游不会使用它）
  *
  * 密钥只读不外显——输出只显示前缀几位，绝不打印完整 Token。
  * ============================================================ */
@@ -42,17 +42,31 @@ const warn = (m, x) => { console.log(`  \x1b[33m⚠\x1b[0m ${m}${x ? `  \x1b[2m$
 const mask = (s) => (s ? `${s.slice(0, 4)}…（${s.length} 位，不回显）` : '（空）');
 
 console.log('\n\x1b[36m▌1 · 凭证配置\x1b[0m');
-const TOKEN_PROBE = (process.env.MODELSCOPE_TOKEN || process.env.RG_PROXY_TOKEN || '').trim();
+const TOKEN_PROBE = (process.env.RG_PROXY_TOKEN || '').trim();
 const MODEL_PROBE = (process.env.RG_PROXY_MODEL || '').trim();
 const BASE_PROBE = (process.env.RG_PROXY_API_BASE || '').trim();
 if (envKeys.size > 0) ok('.env 已读取', [...envKeys].join(', '));
 else if (TOKEN_PROBE && MODEL_PROBE) ok('未找到 .env，改用环境变量（CI / 容器场景）');
 else bad('.env 未找到且环境变量为空', '测试需要 RG_PROXY_TOKEN 与 RG_PROXY_MODEL');
 
-const TOKEN = (process.env.MODELSCOPE_TOKEN || process.env.RG_PROXY_TOKEN || '').trim();
 // 默认上游必须与 app.py 的 API_BASE 默认值保持一致——否则只配 TOKEN/MODEL 时，
 // 预检会把 A 服务商的凭据发往 B 服务商（CodeRabbit 抓到）。
 const API_BASE = (process.env.RG_PROXY_API_BASE || 'https://api.generalcompute.com/v1/chat/completions').trim();
+
+// 凭据选择与 app.py 的 _modelscope_fallback_ok() 保持一致：
+// 优先 RG_PROXY_TOKEN；只有上游确实是魔搭（或显式 MODELSCOPE_FALLBACK_TOKEN=1）
+// 才回退用 MODELSCOPE_TOKEN。默认上游已是 generalcompute，无脑回退会把魔搭
+// 令牌发往第三方（CodeRabbit 抓到）。
+const _isModelscopeHost = (() => {
+  try {
+    const h = new URL(API_BASE).hostname.toLowerCase();
+    return h === 'modelscope.cn' || h.endsWith('.modelscope.cn');
+  } catch { return false; }
+})();
+const TOKEN = (process.env.RG_PROXY_TOKEN
+  || ((_isModelscopeHost || process.env.MODELSCOPE_FALLBACK_TOKEN === '1')
+      ? process.env.MODELSCOPE_TOKEN : '')
+  || '').trim();
 const MODEL = (process.env.RG_PROXY_MODEL || '').trim();
 // 上游是"任意 OpenAI 兼容服务"：魔搭、讯飞星火、其他中转都可能。
 // 不按域名 / 不按 Token 前缀做判断，一律以"实际能否返回 content"为准。
