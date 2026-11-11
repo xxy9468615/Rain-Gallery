@@ -1378,16 +1378,15 @@ function onHotspot(id) {
 }
 
 function openEvidenceModal(title, found, detail, ev, customArt = null) {  $('evidence-title').innerHTML = title;
-  let implicate = '';
-  if (ev && ev.implicates) {
-    const s = CASE.suspects.find((x) => x.id === ev.implicates);
-    implicate = `<p class="implicate">→ 侦探直觉：这条线索与 <b>${s.name}</b> 的说法存在出入。</p>`;
-  }
+  // v3.7.3 · 删掉「侦探直觉：这条线索与 XX 的说法存在出入」。
+  // 11 条物证里 11 条都带 implicates，等于每捡一条线索就附送一次
+  // 「该拿这条去对质谁」——把推理解谜最核心的一步代劳了，难度归零。
+  // 注意：case-data 的 implicates 字段仍保留，suspect-ai.js 的 addCrack
+  // 算分要用它（内部逻辑，不呈现给玩家）。
   $('evidence-body').innerHTML = `
     ${customArt ? `<div class="evidence-art-wrap" style="text-align:center;margin-bottom:14px;">${customArt}</div>` : ''}
     <div class="big">${found}</div>
-    ${detail ? `<div class="detail">🔎 ${detail}</div>` : ''}
-    ${implicate}`;
+    ${detail ? `<div class="detail">🔎 ${detail}</div>` : ''}`;
   $('modal-evidence').classList.remove('hidden');
 }
 

@@ -130,7 +130,10 @@
             <button id="btn-send" class="send-btn" title="发送" aria-label="发送问题">➤</button>
             <button id="btn-present" class="chip-btn">🔍 出示物证</button>
           </div>
-          <p class="hint-line" id="dialog-hint">自由提问：问到点子上，谎言会出现裂缝。</p>
+          <!-- v3.7.3 · 删掉原「自由提问：问到点子上，谎言会出现裂缝」常驻提示。
+               它在教玩家"怎么问才有效"，等于把最优策略贴在输入框下方——
+               与 hint.js 的设计前提（只给方向、不降低推理难度）自相矛盾。
+               且该节点是死元素：全仓库无任何 JS 读写它。 -->
         </div>
       </div>
       <div class="invest-footer">

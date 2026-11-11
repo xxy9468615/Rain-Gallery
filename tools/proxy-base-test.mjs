@@ -528,9 +528,9 @@ section('11 · 第二轮评审修复回归');
   t(!/m\.index \+ body\.slice\(0, m\.index\)\.length/.test(read('tools/proxy-base-test.mjs')),
     'first() 偏移不再算成 2*m.index');
 
-  // 11.17 README 断言数与实际一致（156）
-  t(!/proxy-base-test (?:61|74|114|124|125|126|137|139|143|151) 断言/.test(read('README.md')), 'README 断言数已更新');
-  t(/proxy-base-test 156 断言/.test(read('README.md')), 'README 记录 156 断言');
+  // 11.17 README 断言数与实际一致（165）
+  t(!/proxy-base-test (?:61|74|114|124|125|126|137|139|143|151|156|159) 断言/.test(read('README.md')), 'README 断言数已更新');
+  t(/proxy-base-test 165 断言/.test(read('README.md')), 'README 记录 165 断言');
 
   // 11.18 .gitattributes 注释不再说"按平台还原"
   t(!/检出时按平台还原/.test(gitattr), '.gitattributes 注释已纠正');
@@ -626,6 +626,26 @@ section('11 · 第二轮评审修复回归');
   for (const [word, why] of [['在架', '在售/提供'], ['在綫', '在线'], ['備份', '备份']]) {
     t(!new RegExp(word).test(aiSrc + htmlSrc + gameSrc + cssSrc), `文案无「${word}」（应作${why}）`);
   }
+
+  // 11.30 不把「怎么问」的策略贴在输入框下方（降低推理难度）
+  t(!/id="dialog-hint"/.test(htmlSrc), '审讯区无「问到点子上」常驻提示');
+  t(!/dialog-hint/.test(gameSrc + cssSrc), '无 JS/CSS 残留引用 dialog-hint');
+  t(/旁白只点方向/.test(gameSrc), '求助入口保留代价说明（扣分告知，非难度提示）');
+
+  // 11.31 物证弹窗不再附送「该拿这条去对质谁」（注释里留说明可以，渲染逻辑不行）
+  {
+    const codeOnly = gameSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    t(!/侦探直觉/.test(codeOnly), '物证弹窗无「侦探直觉」指向提示');
+    t(!/class="implicate"/.test(codeOnly), 'openEvidenceModal 不再渲染 implicate 段落');
+  }
+  // 但 implicates 字段本身必须保留：suspect-ai 的 addCrack 算分依赖它
+  t(/evidence\.implicates/.test(saSrc), 'implicates 仍供 addCrack 内部算分使用');
+
+  // 11.32 物证 detail 不得写成结论（不得出现「就该找X」「已确认是X干的」这类断语）
+  const caseSrc = read('js/case-data.js');
+  t(!/这是.{0,6}的秘密/.test(caseSrc), 'detail 不直接点破「这是谁的秘密」');
+  t(!/她谎称/.test(caseSrc), 'detail 不替玩家下「她在撒谎」的判断');
+  t(!/值得当面对质/.test(caseSrc), 'detail 不指示下一步该怎么操作');
 }
 
 /* ============================================================
