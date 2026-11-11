@@ -41,12 +41,15 @@ let _pyProbed = false;
 function pythonCmd() {
   if (_pyProbed) return _pyCmd;
   _pyProbed = true;
+  // 探针必须覆盖测试脚本真实的语法需求：_strip_quotes 与 docstring 扫描都用了
+  // Py3 的类型注解（(v: str) -> str）。只探 print(1) 的话 Python 2 也能过，
+  // 随后跑到真脚本就 SyntaxError 炸掉 pre-commit（CodeRabbit 抓到）。
+  const probe = "def f(v: str) -> str:\n    return v\nprint(f('1'))";
   for (const cmd of ['python3', 'python']) {
     try {
-      execFileSync(cmd, ['-c', 'print(1)'], { stdio: 'ignore' });
-      _pyCmd = cmd;
-      break;
-    } catch (e) { /* 下一个 */ }
+      const out = execFileSync(cmd, ['-c', probe], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+      if (out === '1') { _pyCmd = cmd; break; }
+    } catch (e) { /* 不可用或版本过低，试下一个 */ }
   }
   return _pyCmd;
 }
