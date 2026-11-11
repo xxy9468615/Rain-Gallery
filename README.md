@@ -152,7 +152,7 @@ js/
   profiler.js       侦探能力侧写引擎（AI 报告 + 雷达图）
   audio.js          WebAudio 程序化音效
   storage.js        安全存储层（localStorage 异常时降级内存，无痕模式全程可玩）
-tools/              测试与校验脚本（check-syntax 语法/引用/注释配对 · proxy-base-test 143 断言 · contract-test · latency-test · judge-eval · test_proxy…）
+tools/              测试与校验脚本（check-syntax 语法/引用/注释配对 · proxy-base-test 151 断言 · contract-test · latency-test · judge-eval · test_proxy…）
 雨夜画廊-创作手记/   创作手记（含 NPC 决策闭环实测记录）
 ```
 
@@ -249,7 +249,7 @@ node tools/ai-test.mjs --e2e           # 只跑真实浏览器端到端
 | 契约 | `tools/contract-test.mjs` | `/api/chat`、`/api/judge`、`/api/status` 结构与错误码；伪造 `model`/`Authorization` 必须被忽略；judge 强制非流式；计额随调用增长；出站沙箱与 console 脱敏源码校验 |
 | 端到端 | `tools/e2e-real.mjs` | 真实浏览器加载游戏 → 收集 11 条物证 → 审讯 → **真实流式 AI 回复**，全程零 `pageerror` |
 
-> **免费通道模型选型**（2026-11）：上游 `generalcompute.com` 在架 3 个模型经真实
+> **免费通道模型选型**（2026-11）：上游 `generalcompute.com` 提供的 3 个模型经真实
 > `SUSPECT_PLAY` prompt 四轮压力实测 → `gemma-4-31B-it`（JSON 4/4 · 阶段自洽 3/4 ·
 > 均值 2.5s）设为默认，`gpt-oss-120b`（JSON 1/4 · 均值 4.2s）列为备用，
 > `minimax-m3.1-flash`（无 JSON 输出）下架。切换只需改 `.env` 的 `RG_PROXY_MODEL`。

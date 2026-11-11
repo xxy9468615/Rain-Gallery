@@ -484,8 +484,7 @@ section('11 · 第二轮评审修复回归');
     'doPresent 成功后刷新对峙条');
   t(!/const curMood = stageOf\(st\)/.test(gameSrc), '头像重绘不再用 stageOf');
 
-  // 11.7 评级音效判定按前缀
-  t(/\/\^\[SA\]\/\.test\(sc\.rank\.label\)/.test(gameSrc), '评级音效按 label 前缀判断');
+  // 11.7 评级音效判定按前缀（不能整串比较——label 是完整文案，恒 false）
   t(!/\['S', 'A'\]\.includes\(sc\.rank\.label\)/.test(gameSrc), '不再整串比较 label');
 
   // 11.8 模型 ID 校验在阶段一（落盘之前）
@@ -529,9 +528,9 @@ section('11 · 第二轮评审修复回归');
   t(!/m\.index \+ body\.slice\(0, m\.index\)\.length/.test(read('tools/proxy-base-test.mjs')),
     'first() 偏移不再算成 2*m.index');
 
-  // 11.17 README 断言数与实际一致（143）
-  t(!/proxy-base-test (?:61|74|114|124|125|126|137|139) 断言/.test(read('README.md')), 'README 断言数已更新');
-  t(/proxy-base-test 143 断言/.test(read('README.md')), 'README 记录 143 断言');
+  // 11.17 README 断言数与实际一致（151）
+  t(!/proxy-base-test (?:61|74|114|124|125|126|137|139|143) 断言/.test(read('README.md')), 'README 断言数已更新');
+  t(/proxy-base-test 151 断言/.test(read('README.md')), 'README 记录 151 断言');
 
   // 11.18 .gitattributes 注释不再说"按平台还原"
   t(!/检出时按平台还原/.test(gitattr), '.gitattributes 注释已纠正');
@@ -596,6 +595,20 @@ section('11 · 第二轮评审修复回归');
   t(/match\(\/\\\{\[\\s\\S\]\*\\\}\/\)/.test(saSrc), '裁判 JSON 从代码块中提取');
   const stripFence = (t) => String(t).replace(/```json\s*|```/g, '').match(/\{[\s\S]*\}/);
   t(!!stripFence('```json\n{"tag":"a","confidence":0.9}\n```'), '代码块包裹的 JSON 可被提取');
+
+  // 11.25 结案音效按评级分四档（此前只有「S/A vs 其他」二值）
+  const audSrc = read('js/audio.js');
+  ['rankS', 'rankA', 'rankB', 'rankC'].forEach((fn) => {
+    t(new RegExp(`${fn}\\(\\)\\s*\\{`).test(audSrc), `audio.${fn}() 已定义`);
+  });
+  t(/rankS, A: audio\.rankA/.test(gameSrc) || /\{ S: audio\.rankS, A: audio\.rankA/.test(gameSrc),
+    'renderScore 按评级调用四档音色');
+  t(!/audio\.wrong\(\)/.test(gameSrc), '不再用失败音播放低分评级');
+
+  // 11.26 文案不用港台用语
+  for (const [word, why] of [['在架', '在售/提供'], ['在綫', '在线'], ['備份', '备份']]) {
+    t(!new RegExp(word).test(aiSrc + htmlSrc + gameSrc + cssSrc), `文案无「${word}」（应作${why}）`);
+  }
 }
 
 /* ============================================================

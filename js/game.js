@@ -2105,10 +2105,11 @@ function renderScore(sc) {
     const desc = $('score-rank-desc');
     if (badge) badge.hidden = false;
     if (desc) desc.hidden = false;
-    // S/A 上升音阶、C/D 用 wrong()。rank.label 是完整文案（如 'S · 镇上传说'），
-    // 不能拿整串去 includes(['S','A'])——那样恒 false，S 级也播失败音（CodeRabbit 抓到）
-    if (/^[SA]/.test(sc.rank.label)) audio.verdict();
-    else audio.wrong();
+    // 四档评级各配一段音色：S 上扬号角 / A 沉稳定音 / B 中性收束 / C 下行提示。
+    // 取 label 首字符判级（label 是完整文案如 'S · 镇上传说'，不能整串比较——
+    // 那样恒 false，连 S 级都播失败音，CodeRabbit 抓到过）。
+    const grade = String(sc.rank.label || '').trim().charAt(0).toUpperCase();
+    ({ S: audio.rankS, A: audio.rankA, B: audio.rankB, C: audio.rankC }[grade] || audio.rankB).call(audio);
   }, totalDelay + 420);
 }
 
@@ -2465,6 +2466,8 @@ async function runFinal() {
   stopJuryPending();
   $('jury-box').innerHTML = '';
   $('final-title').textContent = jury.isCorrect ? '真相只有一个' : '陪审团合议完毕';
+  // 结案陈词落定的一声与评级脱钩：无论对错都是"卷宗封存"的重量。
+  // 评级音色交给 renderScore 末尾的朱印出场（四档各不相同）。
   audio.verdict();
   const sc = computeScore(jury.isCorrect);
   await typeText($('jury-box'), sanitizeJuryText(jury.text), 24);

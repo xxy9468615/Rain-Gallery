@@ -186,7 +186,7 @@ export const MOCK_AI = typeof location !== 'undefined'
 /**
  * 可选手搓模型（仅「自定义 Key」模式可选）。
  * ------------------------------------------------------------
- * 2026-11 实测选型：免费通道上游 generalcompute.com 在架 3 个模型，
+ * 2026-11 实测选型：免费通道上游 generalcompute.com 提供的 3 个模型，
  * 用真实 SUSPECT_PLAY prompt 各跑 4 轮压力场景：
  *   gemma-4-31B-it      JSON 4/4 · 阶段自洽 3/4 · 均值 2.5s  ← 默认
  *   gpt-oss-120b        JSON 1/4 · 均值 4.2s（出现过 13s）  ← 备用
