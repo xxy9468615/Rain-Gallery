@@ -14,10 +14,29 @@ if [ -z "$ENV_FILE" ]; then
   echo '  RG_PROXY_MODEL=model-id'
   exit 1
 fi
-set -a
-. "$ENV_FILE"
-set +a
-# 旧格式兼容:CUEL/API_KEY/MODEL → RG_PROXY_*
+# .env 只补空、不覆盖：外部环境变量（CI / 平台 Secret / 命令行临时覆盖）优先。
+# 否则本地 .env 会静默盖掉 RG_PROXY_MODEL 等，表现为"明明换了配置却跑旧模型"。
+if [ "${RG_PROXY_SKIP_ENV_FILE:-0}" = "1" ]; then
+  echo "  ⚠ RG_PROXY_SKIP_ENV_FILE=1：跳过 .env，全部使用外部环境变量"
+else
+  # 先记下外部已设的值（含空值以外的任何显式设置），再 source
+  _EXT_TOKEN="${RG_PROXY_TOKEN-__unset__}"
+  _EXT_BASE="${RG_PROXY_API_BASE-__unset__}"
+  _EXT_MODEL="${RG_PROXY_MODEL-__unset__}"
+  _EXT_CAP="${RG_DAILY_CAP-__unset__}"
+  _EXT_CORS="${CORS_ALLOWED_ORIGINS-__unset__}"
+  set -a
+  . "$ENV_FILE"
+  set +a
+  # 已显式设置的外部变量压回，避免被 .env 覆盖
+  [ "$_EXT_TOKEN" != "__unset__" ] && export RG_PROXY_TOKEN="$_EXT_TOKEN"
+  [ "$_EXT_BASE"  != "__unset__" ] && export RG_PROXY_API_BASE="$_EXT_BASE"
+  [ "$_EXT_MODEL" != "__unset__" ] && export RG_PROXY_MODEL="$_EXT_MODEL"
+  [ "$_EXT_CAP"   != "__unset__" ] && export RG_DAILY_CAP="$_EXT_CAP"
+  [ "$_EXT_CORS"  != "__unset__" ] && export CORS_ALLOWED_ORIGINS="$_EXT_CORS"
+  unset _EXT_TOKEN _EXT_BASE _EXT_MODEL _EXT_CAP _EXT_CORS
+fi
+# 旧格式兼容:CUEL/API_KEY/MODEL → RG_PROXY_*（仅当 RG_PROXY_* 仍未设置）
 export RG_PROXY_TOKEN="${RG_PROXY_TOKEN:-$API_KEY}"
 export RG_PROXY_API_BASE="${RG_PROXY_API_BASE:-$CUEL}"
 export RG_PROXY_MODEL="${RG_PROXY_MODEL:-$MODEL}"

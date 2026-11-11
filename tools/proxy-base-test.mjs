@@ -528,14 +528,31 @@ section('11 · 第二轮评审修复回归');
   t(!/m\.index \+ body\.slice\(0, m\.index\)\.length/.test(read('tools/proxy-base-test.mjs')),
     'first() 偏移不再算成 2*m.index');
 
-  // 11.17 README 断言数与实际一致（151）
-  t(!/proxy-base-test (?:61|74|114|124|125|126|137|139|143) 断言/.test(read('README.md')), 'README 断言数已更新');
-  t(/proxy-base-test 151 断言/.test(read('README.md')), 'README 记录 151 断言');
+  // 11.17 README 断言数与实际一致（156）
+  t(!/proxy-base-test (?:61|74|114|124|125|126|137|139|143|151) 断言/.test(read('README.md')), 'README 断言数已更新');
+  t(/proxy-base-test 156 断言/.test(read('README.md')), 'README 记录 156 断言');
 
   // 11.18 .gitattributes 注释不再说"按平台还原"
   t(!/检出时按平台还原/.test(gitattr), '.gitattributes 注释已纠正');
 
-  // 11.19 Python 函数 docstring 全覆盖（CodeRabbit Docstring Coverage 门槛）
+  // 11.27 部署契约：dev-server 不得让 .env 覆盖外部环境变量
+  //   （实测踩过：shell 里 export 了 spark-x2.6，跑起来仍是 gemma——
+  //     set -a; . .env 无条件覆盖，表现为"换了配置却不生效"）
+  {
+    const src = read('tools/dev-server.sh');
+    t(/_EXT_TOKEN="\$\{RG_PROXY_TOKEN-__unset__\}"/.test(src)
+      && /export RG_PROXY_TOKEN="\$_EXT_TOKEN"/.test(src),
+      'dev-server：外部 RG_PROXY_* 优先于 .env');
+    t(/RG_PROXY_SKIP_ENV_FILE/.test(src), 'dev-server：可用 SKIP_ENV_FILE 完全绕过 .env');
+  }
+
+  // 11.28 app.py 默认值与当前在用的免费通道一致（漏配时不会落到已下架模型）
+  t(/RG_PROXY_MODEL", "gemma-4-31B-it"/.test(appSrc), 'app.py 默认模型 = gemma-4-31B-it');
+  t(/RG_PROXY_API_BASE", "https:\/\/api\.generalcompute\.com/.test(appSrc),
+    'app.py 默认端点 = generalcompute');
+  t(/MODELSCOPE_SDK_TOKEN/.test(appSrc), 'app.py Token 回退读 MODELSCOPE_SDK_TOKEN');
+
+  // 11.29 Python 函数 docstring 全覆盖（CodeRabbit Docstring Coverage 门槛）
   {
     const scan = [
       'import ast, pathlib',

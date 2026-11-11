@@ -152,7 +152,7 @@ js/
   profiler.js       侦探能力侧写引擎（AI 报告 + 雷达图）
   audio.js          WebAudio 程序化音效
   storage.js        安全存储层（localStorage 异常时降级内存，无痕模式全程可玩）
-tools/              测试与校验脚本（check-syntax 语法/引用/注释配对 · proxy-base-test 151 断言 · contract-test · latency-test · judge-eval · test_proxy…）
+tools/              测试与校验脚本（check-syntax 语法/引用/注释配对 · proxy-base-test 156 断言 · contract-test · latency-test · judge-eval · test_proxy…）
 雨夜画廊-创作手记/   创作手记（含 NPC 决策闭环实测记录）
 ```
 
@@ -198,6 +198,16 @@ tools/              测试与校验脚本（check-syntax 语法/引用/注释配
 | `RG_PROXY_API_BASE` | 上游 OpenAI 兼容接口完整 URL | `https://api.generalcompute.com/v1/chat/completions` |
 | `RG_PROXY_MODEL` | 免费通道使用的模型 ID | `gemma-4-31B-it`（备用 `gpt-oss-120b`） |
 | `RG_DAILY_CAP` | 全局每日调用上限（默认 20000） | `20000` |
+
+> **零硬编码，三项即可换上游**：后端只认环境变量，代码里没有写死任何服务商或模型
+> （实测：把 `RG_PROXY_API_BASE` / `RG_PROXY_TOKEN` / `RG_PROXY_MODEL` 换成另一家
+> OpenAI 兼容服务即可，无需改代码）。`app.py` 也备有默认值，漏配时回落到
+> `gemma-4-31B-it`，不会落到已下架的模型 ID。
+> 前后端分域部署时另需 `CORS_ALLOWED_ORIGINS`（见下）。
+>
+> 本地用 `tools/dev-server.sh` 启动时，`.env` **只补空、不覆盖**外部环境变量——
+> 想临时换模型验证，`RG_PROXY_MODEL=xxx bash tools/dev-server.sh 8092` 即可；
+> 想完全绕开 `.env` 用 `RG_PROXY_SKIP_ENV_FILE=1`。
 
 > 代理端**不记录对话内容**，仅按会话计数额（每局 150 次主调用 + 300 次裁判），
 > 详见 `app.py` 顶部注释。

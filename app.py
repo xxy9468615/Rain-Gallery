@@ -33,9 +33,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 # ---------------- 配置 ----------------
+# 全部来自环境变量 / 创空间 Secret，代码零硬编码——换上游服务商、换模型只改环境变量。
+# 部署时的最小配置：RG_PROXY_TOKEN + RG_PROXY_API_BASE + RG_PROXY_MODEL 三项。
+# TOKEN 留空时会回退读 MODELSCOPE_SDK_TOKEN（创空间 gradio 框架自动注入的那个）。
 PROXY_TOKEN = (os.environ.get("RG_PROXY_TOKEN") or os.environ.get("MODELSCOPE_SDK_TOKEN") or "").strip()
-API_BASE = os.environ.get("RG_PROXY_API_BASE", "https://api-inference.modelscope.cn/v1/chat/completions").strip()
-PROXY_MODEL = os.environ.get("RG_PROXY_MODEL", "Qwen/Qwen3.8-Flash-Next").strip()
+API_BASE = os.environ.get("RG_PROXY_API_BASE", "https://api.generalcompute.com/v1/chat/completions").strip()
+PROXY_MODEL = os.environ.get("RG_PROXY_MODEL", "gemma-4-31B-it").strip()
 DAILY_CAP = max(1, int(os.environ.get("RG_DAILY_CAP", "20000")))
 
 SESSION_CAP = 150          # 每局（会话）主调用上限：一局问答约 30~60 次，余量充足
