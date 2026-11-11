@@ -452,8 +452,12 @@ section('11 · 第二轮评审修复回归');
       let src = '';
       for (let j = 0; j < n; j++) {
         const r = rnd();
-        src += r < 0.10 ? '<' + 'think' + '想'
-          : r < 0.20 ? ' worldly  ' + '</' + 'think' + '>'
+        // 四类标签形态都要覆盖：完整开标签（进隐藏区）/ 成对闭标签（出隐藏区）/
+        // 未闭合开标签（挂在末尾被暂扣）/ 畸形标签（缺 > 的边界）——早先漏了第一种，
+        // 200 组样本实际没测过"进出隐藏区"的切分一致性（CodeRabbit 抓到）。
+        src += r < 0.08 ? '<' + 'think' + '>想'                 // 完整开标签 → 进隐藏区
+          : r < 0.16 ? '</' + 'think' + '>正文'                  // 闭标签 → 出隐藏区
+          : r < 0.22 ? '<' + 'think' + '想'                      // 畸形：缺 >
           : r < 0.28 ? ' '
           : `词${j} `;
       }
@@ -587,6 +591,15 @@ section('11 · 第二轮评审修复回归');
     'app.py 默认端点 = generalcompute');
   t(/MODELSCOPE_SDK_TOKEN/.test(appSrc), 'app.py Token 回退读 MODELSCOPE_SDK_TOKEN');
 
+  // 11.39 整数环境变量溢出也要兜住（int(float('1e309')) 抛 OverflowError）
+  t(/except \(TypeError, ValueError, OverflowError\)/.test(appSrc),
+    '_int_env 捕获 OverflowError（1e309/inf 不崩）');
+  const preSrc2 = read('tools/precheck.mjs');
+  t(/u\.protocol !== 'https:'/.test(preSrc2),
+    'precheck 回退魔搭令牌前要求 HTTPS（http 明文不发令牌）');
+  t(/if \(TOKEN && MODEL\)/.test(preSrc2),
+    'precheck 用最终选中的 TOKEN 判断配置（只配 MODELSCOPE_TOKEN 不误判为空）');
+
   // 11.29 Python 函数 docstring 全覆盖（CodeRabbit Docstring Coverage 门槛）
   // 扫描逻辑抽成函数：既跑真实扫描，也用来验证 catch 分支真会把失败记下来。
   // 早先是自指正则（在测试文件里搜自己的字符串），恒为真、守不住行为——
@@ -619,8 +632,15 @@ section('11 · 第二轮评审修复回归');
       r.error || (r.missing === '0' ? '' : `缺失 ${r.missing} 个`));
   }
   {
-    const r = runDocstringScan('def broken(:');
-    t(!r.skipped && !!r.error, '扫描崩溃时记失败而非静默跳过', r.error || '（被吞掉了）');
+    // 先处理 skipped：只有 python3 确实存在时才验证「崩溃会被记录」。
+    // 否则 Windows（常有 python 无 python3）上这条自测会把 CI 染红。
+    const probe = runDocstringScan('print(1)');
+    if (probe.skipped) {
+      console.log('  \x1b[33m⚠\x1b[0m 扫描错误自测跳过（python3 不可用）');
+    } else {
+      const r = runDocstringScan('def broken(:');
+      t(!r.skipped && !!r.error, '扫描崩溃时记失败而非静默跳过', r.error || '（被吞掉了）');
+    }
   }
 
   // 11.20 UI 分层收ulaire：设置页三段 + 高级折叠

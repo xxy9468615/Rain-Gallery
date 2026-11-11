@@ -73,7 +73,8 @@ def _int_env(name: str, default: int, lo: int = 1) -> int:
         return default
     try:
         return max(lo, int(float(raw)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError 也在内：int(float("1e309")) 是 inf→int，抛的是溢出而非值错误
         return default
 
 

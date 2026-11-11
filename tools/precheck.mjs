@@ -42,12 +42,12 @@ const warn = (m, x) => { console.log(`  \x1b[33m⚠\x1b[0m ${m}${x ? `  \x1b[2m$
 const mask = (s) => (s ? `${s.slice(0, 4)}…（${s.length} 位，不回显）` : '（空）');
 
 console.log('\n\x1b[36m▌1 · 凭证配置\x1b[0m');
-const TOKEN_PROBE = (process.env.RG_PROXY_TOKEN || '').trim();
+// 探测用"最终选中的 TOKEN"而非裸 RG_PROXY_TOKEN：只配 MODELSCOPE_TOKEN
+// （上游是魔搭时完全合法）时，早先的写法会误判「环境变量为空」直接退出。
+// 因此挪到令牌选择之后再判断，见下方 TOKEN 定义处。
 const MODEL_PROBE = (process.env.RG_PROXY_MODEL || '').trim();
 const BASE_PROBE = (process.env.RG_PROXY_API_BASE || '').trim();
 if (envKeys.size > 0) ok('.env 已读取', [...envKeys].join(', '));
-else if (TOKEN_PROBE && MODEL_PROBE) ok('未找到 .env，改用环境变量（CI / 容器场景）');
-else bad('.env 未找到且环境变量为空', '测试需要 RG_PROXY_TOKEN 与 RG_PROXY_MODEL');
 
 // 默认上游必须与 app.py 的 API_BASE 默认值保持一致——否则只配 TOKEN/MODEL 时，
 // 预检会把 A 服务商的凭据发往 B 服务商（CodeRabbit 抓到）。
@@ -59,7 +59,11 @@ const API_BASE = (process.env.RG_PROXY_API_BASE || 'https://api.generalcompute.c
 // 令牌发往第三方（CodeRabbit 抓到）。
 const _isModelscopeHost = (() => {
   try {
-    const h = new URL(API_BASE).hostname.toLowerCase();
+    // 与 app.py 的 _modelscope_fallback_ok() 逐条对齐：协议必须是 https，
+    // 否则 http://modelscope.cn 会把令牌明文发到线路上（CodeRabbit 抓到）。
+    const u = new URL(API_BASE);
+    if (u.protocol !== 'https:') return false;
+    const h = u.hostname.toLowerCase();
     return h === 'modelscope.cn' || h.endsWith('.modelscope.cn');
   } catch { return false; }
 })();
@@ -68,6 +72,10 @@ const TOKEN = (process.env.RG_PROXY_TOKEN
       ? process.env.MODELSCOPE_TOKEN : '')
   || '').trim();
 const MODEL = (process.env.RG_PROXY_MODEL || '').trim();
+if (envKeys.size === 0) {
+  if (TOKEN && MODEL) ok('未找到 .env，改用环境变量（CI / 容器场景）');
+  else bad('.env 未找到且环境变量为空', '测试需要 TOKEN（RG_PROXY_TOKEN / 上游为魔搭时的 MODELSCOPE_TOKEN）与 RG_PROXY_MODEL');
+}
 // 上游是"任意 OpenAI 兼容服务"：魔搭、讯飞星火、其他中转都可能。
 // 不按域名 / 不按 Token 前缀做判断，一律以"实际能否返回 content"为准。
 const UPSTREAM_NAME = new URL(API_BASE).hostname;
