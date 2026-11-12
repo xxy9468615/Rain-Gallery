@@ -6,8 +6,9 @@
  * - 雷达图：纯代码 SVG 绘制，延续零素材风格
  * ============================================================ */
 
-import { CASE } from './case-data.js?v=3.5.0';
-import { chatCompletion, withTimeout } from './ai-client.js?v=3.5.0';
+import { CASE } from './case-data.js?v=3.6.0';
+import { chatCompletion, withTimeout } from './ai-client.js?v=3.6.0';
+import { PROMPTS } from './prompts.js?v=3.6.0';
 
 /* ---------------- 五维能力定义 ---------------- */
 
@@ -107,14 +108,35 @@ export function buildStatsDigest(snap, sc) {
     })
     .map((s) => s.name)
     .join('、') || '无人完整坦白';
+  // v3.7 · 关系走向：逐人列出终局的信任/敌意/阶段。
+  // 这是 AI 侧写能评论具体决策的唯一依据——「你在林曼青敌意 70 时仍强行施压」
+  // 只有同时看到 hostility 和 pressure 才说得出。
+  const relLine = CASE.suspects
+    .map((s) => {
+      const st = (snap.suspectsState || {})[s.id];
+      return st ? `${s.name} 信${st.trust}/敌${st.hostility}/压${st.pressure}(${st.stage})` : null;
+    })
+    .filter(Boolean)
+    .join('、') || '（本局未与任何人交谈）';
+  const lost = snap.lostEvidence && snap.lostEvidence.length
+    ? snap.lostEvidence.map((id) => (CASE.evidences.find((e) => e.id === id) || {}).name || id).join('、')
+    : '';
+  // 求助痕迹：AI 评估要能评论「玩家在哪个节点卡住了」，
+  // 求助次数是「独立作答能力」最直接的代理指标。
+  const hintsUsed = stats.hintsUsed || 0;
+  const hintLine = hintsUsed > 0
+    ? `求助旁白：${hintsUsed} 次（评分已扣 ${(sc.hintCut != null ? sc.hintCut : 0)} 分）`
+    : '求助旁白：0 次（全程独立作答）';
 
   return [
     `用时：约 ${minutes} 分钟`,
-    `物证：找到 ${snap.found.length}/${CASE.evidences.length} 条，发现顺序为「${(stats.evidenceOrder || []).join(' → ') || '无'}」，第一件发现的是《${firstFound}》`,
+    `物证：找到 ${snap.found.length}/${CASE.evidences.length} 条，发现顺序为「${(stats.evidenceOrder || []).join(' → ') || '无'}」，第一件发现的是《${firstFound}》${lost ? `；被销毁丢失：${lost}` : ''}`,
     `剧情热点：查看 ${snap.dramasSeen.length}/1 处；房间访问分布：${rooms}（首选进入：${firstRoomObj ? firstRoomObj.name : '无'}）`,
     `审讯：总提问 ${snap.askedTotal} 次（${qLine}），戳穿 ${snap.crackCount} 次，${confessions}`,
+    `关系走向（终局）：${relLine}`,
     `出示物证：${presents}；重复查看已收集物证 ${stats.repeatViews || 0} 次，重复提问 ${stats.repeatQuestions || 0} 次`,
     `指认：${snap.accused ? (CASE.suspects.find((s) => s.id === snap.accused) || {}).name : '（未指认）'}；定罪证据勾选 ${(snap.chosenEvidence || []).length} 条`,
+    hintLine,
     `结算：综合 ${sc.total}/100（指认${sc.culpritOk ? '正确' : '错误'}，关键证据命中 ${sc.keyHits}/${CASE.truth.keyEvidenceIds.length}），评级 ${sc.rank.label}`,
   ].join('\n');
 }
@@ -129,30 +151,13 @@ export async function aiProfileReport(profile, snap, sc) {
   const dimsLine = profile.labels.map((l, i) => `${l} ${profile.dims[i]}`).join(' / ');
   const titleSeed = styleTitle(profile);
 
-  const sys = `你是《雨夜画廊》推理游戏里的资深刑侦顾问，为刚结案的侦探（玩家）撰写一份「能力侧写报告」。你的评估必须与解谜行为强绑定：所有判断都要引用玩家的真实行为痕迹数据，禁止空泛的赞美；同时运用正向认知重构——无论分数高低，都要从数据中找到真实的执行长板并指出现实能力映射（巴纳姆效应的合理运用：结论具体到行为，让玩家觉得"准且有成就感"）。
-
-输出格式（严格遵守，每行一条，不要 markdown 标记、不要列表符号、不要加引号）：
-风格称号：<4-10字的称号>｜<一句话注解>
-长板·<长板名>：<引用至少一处具体行为痕迹（如用时/发现顺序/出示次数/提问分布）> → <映射到现实中的能力，如细致耐心、信息组织力、心理洞察等>
-长板·<长板名>：<同上格式>
-长板·<长板名>：（可选，最多三条）
-盲区提醒：<引用一处具体行为数据，温和指出一个可提升点，不要否定玩家>
-下一案建议：<一条具体、可执行的下一步行动建议>
-
-要求：口吻冷静克制、带一点雨夜黑色电影的质感；"长板"至少两条；引用行为数据至少 3 处；全文不超过 380 字。`;
-
-  const user = `侦探的行为痕迹数据：
-${digest}
-
-五维能力派生分（0-100）：${dimsLine}
-规则引擎初步判断的思维风格：${titleSeed.t}（${titleSeed.n}）
-
-请据此撰写侧写报告。`;
+  const sys = '你是《雨夜画廊》推理游戏里的资深刑侦顾问。回复正文就是侧写报告本身，不要 JSON、不要标题编号、不要解释你的评估过程。';
+  const user = PROMPTS.PROFILE(digest, dimsLine, titleSeed);
 
   const reply = await withTimeout(
-    () => chatCompletion(
+    (signal) => chatCompletion(
       [{ role: 'system', content: sys }, { role: 'user', content: user }],
-      { temperature: 0.5, maxTokens: 900 },
+      { temperature: 0.5, maxTokens: 900, signal },
     ),
     45000,
   );

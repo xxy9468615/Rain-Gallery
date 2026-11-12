@@ -1,15 +1,16 @@
 /* 真实 AI 端到端回归(本地测试用):加载 → 徽标 → 开新局 → 收集物证 → 审讯 → 流式/裁判/行动
  *
  * 依赖 playwright-core(仅本地测试用,不属于游戏运行时):
- *   npm i --no-save playwright-core   # 需要本机 Chrome
+ *   npm i --no-save playwright-core   # 另需本机 Chrome/Chromium
  * 运行(服务端需带 .env 配置启动,游戏本体挂在 /game/):
- *   node tools/e2e-real.mjs
+ *   node tools/e2e-real.mjs [http://127.0.0.1:8092]
+ * 浏览器探测顺序见 tools/_browser.mjs（CHROME_PATH 可显式指定）
  */
-import { chromium } from 'playwright-core';
+import { launchBrowser } from './_browser.mjs';
 const BASE = (process.argv[2] || 'http://127.0.0.1:8092').replace(/\/$/, '');
 // app.py 把游戏本体挂在 /game/（Gradio 占根路径），/api/* 与静态同源
 const GAME = `${BASE}/game/`;
-const b = await chromium.launch({ headless: true, executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe' });
+const b = await launchBrowser();
 const p = await b.newPage();
 const errs = [];
 p.on('pageerror', (e) => errs.push(String(e).slice(0, 150)));
@@ -60,7 +61,17 @@ await p.evaluate(() => { const g = document.querySelector('#modal-guide'); if (g
 await p.waitForTimeout(300);
 await step('进入审讯', async () => { await p.locator('#btn-to-interrogate').click(); await p.waitForTimeout(700); return p.evaluate(() => !document.querySelector('#phase-interrogate').classList.contains('hidden')); });
 await step('三维数值条渲染', async () => p.evaluate(() => document.querySelectorAll('#dialog-head .rel-fill').length >= 3));
-await step('建议提问气泡', async () => p.evaluate(() => document.querySelectorAll('.suggest-chip').length >= 3));
+// v3.7 · 静态「建议提问」「已被求助系统替换：不再把最优问句原文喂给玩家，
+// 改为一个求助按钮（点完向 AI 要一个方向），一局 3 次并扣分。
+await step('求助按钮在位（替代静态建议提问）', async () => p.evaluate(() => {
+  const btn = document.getElementById('btn-hint');
+  return btn ? btn.textContent.trim() : false;
+}));
+await step('证据对峙条常驻', async () => p.evaluate(() => {
+  const bar = document.getElementById('evidence-bar');
+  return bar && !bar.classList.contains('hidden') && bar.querySelectorAll('.ev-chip').length > 0
+    ? bar.querySelectorAll('.ev-chip').length + ' 个物证图标' : false;
+}));
 
 // 真实 AI 提问(含流式)
 const t0 = Date.now();

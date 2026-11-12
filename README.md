@@ -128,9 +128,11 @@ deployspec:
 
 - **调查**：每个房间点击发光的热点收集物证；证据详情里的"侦探推理"值得细读
 - **审讯**：随意说话——问动机、问时间、问关系；被戳中的嫌疑人会露出马脚
-- **出示物证**：把证据拍在桌上是最有效的进攻方式，尤其是和对方说辞矛盾的那些
-- **情绪**：嫌疑人头像旁的状态会从 🛡镇定 → 🌀动摇 → 💥崩溃；崩溃后继续追问能拿到完整坦白
+- **出示物证**：把证据拍在桌上是最有效的进攻方式（审讯界面下方常驻的物证图标栏即点即出示），尤其是和对方说辞矛盾的那些
+- **情绪**：嫌疑人头像旁的状态会从 🛡镇定 → 😬咬牙硬撑 → 🌀动摇 → 💥崩溃；崩溃后继续追问能拿到完整坦白
+- **求助**：卡住时点「🧭 求助」——旁白会点一个**方向**（不会替你写好问句、也不点名物证）。一局 3 次，每次在结案评分扣 2 分（封顶 6 分）
 - **指认**：指认凶手 + 勾选关键证据链，评分与两者都挂钩
+- **能力评估**：结案后评分是规则算分；「🧠 生成我的能力评估」由 AI 读你整晚的行为痕迹独立撰写五维画像，纯主动触发、不影响评分
 
 ## 📁 项目结构
 
@@ -138,19 +140,36 @@ deployspec:
 app.py              免费 AI 代理（FastAPI：静态托管 + /api/chat + /api/judge）
 requirements.txt    服务端依赖（fastapi / uvicorn / httpx）
 index.html          页面骨架
-css/style.css       暗色侦探风 UI + 雨幕动画
+css/style.css       暗色侦探风 UI + 雨幕动画 + 动感计分 / 红章徽章
 assets/audio/       开场旁白 MP3
 js/
-  case-data.js      案件数据（物证/嫌疑人/真相/NPC 行动定义）
+  case-data.js      案件数据（物证/嫌疑人/真相/NPC 行动定义；人设四层 voice/defense/core/arc）
+  prompts.js        Prompt 资产层（六类系统提示 + 输出契约 + 阶段表演护栏）
+  hint.js           求助系统（AI 要方向 + 五道合规闸 + 计分惩罚）
   game.js           四幕状态机 / SVG 场景 / 评分 / 存档 / 关系 UI
   suspect-ai.js     嫌疑人引擎（流式 AI 决策 + 规则层校验 + 并行裁判；无离线剧本）
   ai-client.js      双通道客户端（免费代理 / 自定义 Key 直连）
   profiler.js       侦探能力侧写引擎（AI 报告 + 雷达图）
   audio.js          WebAudio 程序化音效
   storage.js        安全存储层（localStorage 异常时降级内存，无痕模式全程可玩）
-tools/              测试与校验脚本（check-syntax 语法/引用/注释配对 · latency-test · judge-eval · test_proxy…）
+tools/              测试与校验脚本（check-syntax 语法/引用/注释配对 · proxy-base-test 179 断言 · contract-test · latency-test · judge-eval · test_proxy…）
 雨夜画廊-创作手记/   创作手记（含 NPC 决策闭环实测记录）
 ```
+
+## 🧩 v3.7 · 大模型架构设计要点
+
+> 本作以「大模型为基石」：没有离线剧本，嫌疑人、裁判、陪审团、侧写、旁白全部由 AI 实时生成；
+> 游戏规则层只做**校验**与**钳制**，不做**代写**。以下是几个刻意的设计取舍：
+
+| 设计点 | 做法 | 理由 |
+|---|---|---|
+| **Prompt 资产化** | 六类系统提示收拢到 `js/prompts.js`，各带 `version` | 同段人格描述散在三处时，改一处漏一处就出现「提示词说 A、测试断言验 B」的静默漂移 |
+| **人设四层拆分** | `voice / defense / core / arc` | 混成一句时，崩溃期模型会用冷静人设的书面语气念崩溃台词——表层语气压倒深层内容 |
+| **阶段表演护栏** | `STAGE_DESC` 与 `pressure` 阈值对齐 | 温度 0.85 的人格采样会越阈表演；护栏让压力 0 时哭诉 = 违规 |
+| **求助只给方向** | 五道合规闸 + 本案高辨识词表 | 否则玩家一键通关，推理乐趣归零。子串匹配挡不住 paraphrase，必须叠词表 |
+| **结算与评估分离** | 评分规则算，评估用户按需触发 | 两件事混在同一视觉流里读不出层次，且 380 字报告会自动打断真相阅读 |
+| **免费通道透明** | 设置面板明示服务端实际模型 | 免费通道模型由 `_forward` 强制，前端传什么都不作数——不让玩家以为在用列表里的默认值 |
+
 
 ## 🚀 部署指引（发布试玩链接）
 
@@ -176,9 +195,19 @@ tools/              测试与校验脚本（check-syntax 语法/引用/注释配
 | 环境变量 | 作用 | 示例 |
 |---|---|---|
 | `RG_PROXY_TOKEN` | 平台免费 Key（**必配**） | `ak-xxxxxxxx` |
-| `RG_PROXY_API_BASE` | 上游 OpenAI 兼容接口完整 URL | `https://maas-api.cn-huabei-1.xf-yun.com/v2/chat/completions` |
-| `RG_PROXY_MODEL` | 免费通道使用的模型 ID | `spark-x2.6` / `Qwen/Qwen3.8-Flash-Next` |
+| `RG_PROXY_API_BASE` | 上游 OpenAI 兼容接口完整 URL | `https://api.generalcompute.com/v1/chat/completions` |
+| `RG_PROXY_MODEL` | 免费通道使用的模型 ID | `gemma-4-31B-it`（备用 `gpt-oss-120b`） |
 | `RG_DAILY_CAP` | 全局每日调用上限（默认 20000） | `20000` |
+
+> **零硬编码，三项即可换上游**：后端只认环境变量，代码里没有写死任何服务商或模型
+> （实测：把 `RG_PROXY_API_BASE` / `RG_PROXY_TOKEN` / `RG_PROXY_MODEL` 换成另一家
+> OpenAI 兼容服务即可，无需改代码）。`app.py` 也备有默认值，漏配时回落到
+> `gemma-4-31B-it`，不会落到已下架的模型 ID。
+> 前后端分域部署时另需 `CORS_ALLOWED_ORIGINS`（见下）。
+>
+> 本地用 `tools/dev-server.sh` 启动时，`.env` **只补空、不覆盖**外部环境变量——
+> 想临时换模型验证，`RG_PROXY_MODEL=xxx bash tools/dev-server.sh 8092` 即可；
+> 想完全绕开 `.env` 用 `RG_PROXY_SKIP_ENV_FILE=1`。
 
 > 代理端**不记录对话内容**，仅按会话计数额（每局 150 次主调用 + 300 次裁判），
 > 详见 `app.py` 顶部注释。
@@ -209,12 +238,14 @@ git commit --no-verify         # 确认无误时跳过
 
 ```bash
 # 1. 准备测试环境（fastapi/uvicorn/httpx，与运行时隔离）
-uv venv .venv-test --python 3.12
-uv pip install --python .venv-test/Scripts/python.exe fastapi uvicorn httpx
-npm i --no-save playwright-core        # 端到端需要，本机 Chrome
+#    Linux / macOS                       # Windows（PowerShell）
+python3 -m venv .venv-test               # python -m venv .venv-test
+.venv-test/bin/pip install fastapi uvicorn httpx   # .venv-test\Scripts\pip install ...
+npm i --no-save playwright-core
 
 # 2. 启动后端（复用 app.py 的 FastAPI app，跳过 Gradio 入口页）
-.venv-test/Scripts/python.exe tools/_api_server.py --port 8092
+.venv-test/bin/python tools/_api_server.py --port 8092   # Windows: .venv-test\Scripts\python ...
+#    跨平台等价写法：bash tools/dev-server.sh 8092（自动探测解释器）
 
 # 3. 一键测试
 node tools/ai-test.mjs                 # 预检 → 契约 → 真实端到端
@@ -228,12 +259,41 @@ node tools/ai-test.mjs --e2e           # 只跑真实浏览器端到端
 | 契约 | `tools/contract-test.mjs` | `/api/chat`、`/api/judge`、`/api/status` 结构与错误码；伪造 `model`/`Authorization` 必须被忽略；judge 强制非流式；计额随调用增长；出站沙箱与 console 脱敏源码校验 |
 | 端到端 | `tools/e2e-real.mjs` | 真实浏览器加载游戏 → 收集 11 条物证 → 审讯 → **真实流式 AI 回复**，全程零 `pageerror` |
 
-> **上游特性说明**：推理模型（如 `spark-x2.6`）会先消耗 token 预算做思维链，
-> 因此 `max_tokens` 给太小会导致 `content` 为空、后端按 `BAD_UPSTREAM` 返回 502。
-> 契约测试已按生产语义给足预算并对偶发空响应重试。
+> **免费通道模型选型**（2026-11）：上游 `generalcompute.com` 提供的 3 个模型经真实
+> `SUSPECT_PLAY` prompt 四轮压力实测 → `gemma-4-31B-it`（JSON 4/4 · 阶段自洽 3/4 ·
+> 均值 2.5s）设为默认，`gpt-oss-120b`（JSON 1/4 · 均值 4.2s）列为备用，
+> `minimax-m3.1-flash`（无 JSON 输出）下架。切换只需改 `.env` 的 `RG_PROXY_MODEL`。
+>
+> **上游特性说明**：部分模型会把 JSON 包进 markdown 代码块（gemma 实测如此），
+> 前端 `judgeCrack` / `parseDecision` 均已用 `/\{[\s\S]*\}/` 提取兜住；
+> 推理模型的思维链会先消耗 token 预算，`max_tokens` 给小会导致 `content` 为空、
+> 后端按 `BAD_UPSTREAM` 返回 502——契约测试已按生产语义给足预算并重试。
 >
 > 密钥只从 `.env` / 环境变量读取，**绝不打印、绝不写入日志或提交物**；
 > `.env` 与 `.venv-test/` 均已在 `.gitignore` 中。
+
+### 🖥️ 跨平台注意（Linux / macOS / Windows）
+
+| 项 | 处理方式 |
+|---|---|
+| 换行符 | `.gitattributes` 置 `* text=auto eol=lf`，仓库与 blob 一律 LF；Windows 检出自动还原 CRLF，不会污染 diff |
+| venv 路径 | `.venv-test/bin/python`（Linux/macOS）与 `.venv-test/Scripts/python.exe`（Windows）都被支持；`dev-server.sh` / pre-commit 会自动探测（且会实际执行探活，避免选中别的平台留下的无效解释器），也可用 `PYTHON` 环境变量显式指定 |
+| 浏览器 | e2e 脚本经 `tools/_browser.mjs` 按平台探测 Chrome/Chromium，`CHROME_PATH=/path/to/chrome` 可显式指定；找不到时给出安装指引而非 ENOENT |
+| `.env` 引号 | 写成 `RG_PROXY_API_BASE="https://..."` 时，`tools/_api_server.py` 的 `_strip_quotes()` 会剥掉成对引号；不剥则值带引号进 httpx，URL scheme 变成 `https"` → **`UnsupportedProtocol` → 502 UPSTREAM_ERROR**，且 URL repr 看起来完全正常，极难定位 |
+| `tools/test_proxy.py` | 自带 gradio 打桩与代理关闭，本地未装 gradio、本机有 `http_proxy` 都能直接跑 |
+
+> **Linux 沙盒跑 e2e 的浏览器依赖**：headless Chromium 还需要少量系统库
+> （`libnspr4`、`libnss3`、`libasound2t64` 等）。有 root 时一行装好：
+> ```bash
+> npx playwright install --with-deps chromium    # 让 playwright 自己装依赖
+> ```
+> 无 root（容器/沙盒）时把依赖库解到本地目录，用 `LD_LIBRARY_PATH` 指过去即可：
+> ```bash
+> apt-get download libnspr4 libnss3 libasound2t64   # 只下载 .deb，不需要 sudo
+> mkdir -p /tmp/libs && for d in ./*.deb; do dpkg-deb -x "$d" /tmp/libs; done
+> LD_LIBRARY_PATH=/tmp/libs/usr/lib/x86_64-linux-gnu \
+>   node tools/e2e-real.mjs http://127.0.0.1:8092
+> ```
 
 ## 🎨 画面与风格
 
@@ -257,3 +317,24 @@ node tools/ai-test.mjs --e2e           # 只跑真实浏览器端到端
 
 - [魔搭 ModelScope](https://modelscope.cn) —— API-Inference 免费模型推理
 - AI+∞ 开发者创作大赛第三期「AI造游戏」
+
+### 🌐 前后端分域部署（v3.6 · 静态托管 + 独立后端）
+
+前端静态托管（GitHub Pages / Vercel / Netlify）不含 `/api/*`，免费通道默认置灰。若已把
+`app.py` 部署到独立后端，只需在设置里填：
+
+| 字段 | 填法 | 说明 |
+|---|---|---|
+| **免费通道代理基址** | `https://your-api.onrender.com` | 只填根地址（`scheme://host[:port]`）：不带 `/api` 路径、不带查询参数、不带 `#片段`、不带账号密码 |
+| **AI 接口来源** | 🎁 免费内置 | 前端会跨域请求上面的基址 |
+
+服务端需开启 CORS，`app.py` 已内置，由 `CORS_ALLOWED_ORIGINS` 控制：
+
+| 配置 | 行为 |
+|---|---|
+| **留空（默认）** | 只允许同源；跨域一律拒绝（fail-closed） |
+| `https://xxx.github.io` | 只放行该来源（分域部署的标准填法，多个用逗号分隔） |
+| `*` | 任意来源可跨域调用——**仅限本地调试**，会占用共享日额度 |
+
+同域部署（创空间）无需任何 CORS 配置：浏览器不发 `Origin`，中间件直接放行。
+CORS 拦不住非浏览器客户端，不能替代鉴权。代理仍只计数额、不记录对话内容。

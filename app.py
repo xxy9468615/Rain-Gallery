@@ -24,18 +24,61 @@
 import os
 import time
 from datetime import date
+from urllib.parse import urlparse
 
 import httpx
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 # ---------------- 配置 ----------------
-PROXY_TOKEN = (os.environ.get("RG_PROXY_TOKEN") or os.environ.get("MODELSCOPE_SDK_TOKEN") or "").strip()
-API_BASE = os.environ.get("RG_PROXY_API_BASE", "https://api-inference.modelscope.cn/v1/chat/completions").strip()
-PROXY_MODEL = os.environ.get("RG_PROXY_MODEL", "Qwen/Qwen3.8-Flash-Next").strip()
-DAILY_CAP = max(1, int(os.environ.get("RG_DAILY_CAP", "20000")))
+# 全部来自环境变量 / 创空间 Secret，代码零硬编码——换上游服务商、换模型只改环境变量。
+# 部署时的最小配置：RG_PROXY_TOKEN + RG_PROXY_API_BASE + RG_PROXY_MODEL 三项。
+API_BASE = os.environ.get("RG_PROXY_API_BASE", "https://api.generalcompute.com/v1/chat/completions").strip()
+PROXY_MODEL = os.environ.get("RG_PROXY_MODEL", "gemma-4-31B-it").strip()
+
+# Token 回退读 MODELSCOPE_SDK_TOKEN 只在上游仍是魔搭时成立——
+# 默认端点已换成第三方（generalcompute）。若无条件回退，创空间自动注入的
+# 魔搭令牌会被发往第三方端点（CodeRabbit 抓到：凭据误用 + 预检工具默认值不一致）。
+# 换回魔搭上游时改 API_BASE 即可，或用 MODELSCOPE_FALLBACK_TOKEN=1 显式允许。
+def _modelscope_fallback_ok() -> bool:
+    """是否允许把 MODELSCOPE_SDK_TOKEN 当作免费通道 Key。
+
+    必须按 URL 主机名判断，不能用字符串包含——`modelscope.cn.attacker.example`
+    也会包含 "modelscope.cn"，那把 SDK Token 发去攻击者主机（CodeRabbit 抓到）。
+    """
+    if os.environ.get("MODELSCOPE_FALLBACK_TOKEN") == "1":
+        return True
+    try:
+        parsed = urlparse(API_BASE)
+    except Exception:
+        return False
+    if parsed.scheme != "https":
+        return False
+    host = (parsed.hostname or "").lower()
+    return host == "modelscope.cn" or host.endswith(".modelscope.cn")
+
+
+PROXY_TOKEN = (os.environ.get("RG_PROXY_TOKEN")
+               or (os.environ.get("MODELSCOPE_SDK_TOKEN") if _modelscope_fallback_ok() else "")
+               or "").strip()
+# 空串也要兜住：直接 int("") 会在 import 阶段 ValueError 崩掉整个服务
+# （外部传 `RG_DAILY_CAP=` 空值的场景真实存在）。
+def _int_env(name: str, default: int, lo: int = 1) -> int:
+    """读整数环境变量；非数字 / 空 / 越界一律回落默认值。"""
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return max(lo, int(float(raw)))
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError 也在内：int(float("1e309")) 是 inf→int，抛的是溢出而非值错误
+        return default
+
+
+DAILY_CAP = _int_env("RG_DAILY_CAP", 20000)
 
 SESSION_CAP = 150          # 每局（会话）主调用上限：一局问答约 30~60 次，余量充足
 JUDGE_SESSION_CAP = 300    # 裁判调用独立额度（不占 150 主额度），仅防滥用
@@ -55,6 +98,35 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 app = FastAPI(title="Rain Gallery Free-AI Proxy", docs_url=None, redoc_url=None)
 
+# ---------------- CORS（静态托管的前端需要跨域调用本代理） ----------------
+# 策略：留空 = 只允许同源，跨域一律拒绝（默认拒绝，fail-closed）。
+#   - 同域部署（创空间 / 本仓库 app.py 自己托管静态文件）：浏览器不发 Origin，
+#     中间件直接放行，无需任何配置。
+#   - 前后端分域（前端 GitHub Pages + 后端 Render）：必须显式把前端 Origin
+#     写进 CORS_ALLOWED_ORIGINS，例如 https://user.github.io。
+#   - 只有在本地调试时才值得写 CORS_ALLOWED_ORIGINS=*（任意来源可跨域调用，
+#     会消耗共享日额度，且 CORS 拦不住非浏览器客户端，不能当鉴权用）。
+# allow_credentials=False：免费通道不依赖 Cookie，绝不与 allow_origins=["*"] 组合放大风险。
+# 注意：前端不向本代理发送 Authorization 头（免费通道由服务端持 Key），
+#       故 allow_headers 只列实际会用到的两个；多列一个会让预检放宽而毫无收益。
+def _cors_origins() -> list:
+    """解析 CORS 来源白名单（逗号分隔）；空列表 = 未配置 = 拒绝跨域。"""
+    raw = os.environ.get("CORS_ALLOWED_ORIGINS", "")
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Session-Id"],
+    # 跨域时浏览器默认只让脚本读取 CORS 安全响应头；Retry-After 不在其中。
+    # 前端 _rawProxy 靠它做限流退避，不透出的话分域部署下会静默退回固定 2s 退避
+    # ——而这正是本 PR 新增的场景（CodeRabbit 抓到）。
+    expose_headers=["Retry-After"],
+)
+
 # ---------------- 计数额（内存态，重启清零；不含任何对话内容） ----------------
 _sessions = {}   # sessionId -> {"chat": int, "judge": int}
 _ip_hour = {}    # ip -> (hour_bucket, count)
@@ -62,6 +134,7 @@ _global = {"day": None, "count": 0}
 
 
 def _today():
+    """当天日期字符串，全局日上限按它归零。"""
     return date.today().isoformat()
 
 
@@ -77,10 +150,12 @@ def _client_ip(request: Request) -> str:
 
 
 def _session_counts(session_id: str):
+    """取（必要时创建）某会话的计额桶；仅存计数，不含任何对话内容。"""
     return _sessions.setdefault(session_id, {"chat": 0, "judge": 0})
 
 
 def _global_ok() -> bool:
+    """全局当日额度是否还有余量；跨天自动归零。"""
     today = _today()
     if _global["day"] != today:
         _global["day"] = today
@@ -89,6 +164,7 @@ def _global_ok() -> bool:
 
 
 def _ip_ok(ip: str) -> bool:
+    """单 IP 每小时额度闸（防脚本刷量）；超额返回 False 即拒绝。"""
     bucket = int(time.time() // 3600)
     cur = _ip_hour.get(ip)
     if not cur or cur[0] != bucket:
@@ -101,12 +177,14 @@ def _ip_ok(ip: str) -> bool:
 
 
 def _err(status: int, code: str, message: str) -> JSONResponse:
+    """统一错误响应体：{"error": {"code", "message"}}，前端按 code 分流提示。"""
     return JSONResponse({"error": {"code": code, "message": message}}, status_code=status)
 
 
 # ---------------- 免费通道状态 ----------------
 @app.get("/api/status")
 async def api_status(request: Request):
+    """免费通道可用性 / 模型名 / 本会话与当日剩余额度（无任何对话内容）。"""
     session_id = request.headers.get("x-session-id", "")
     used = _sessions.get(session_id, {}).get("chat", 0) if session_id else 0
     return {
@@ -121,6 +199,11 @@ async def api_status(request: Request):
 
 # ---------------- 统一转发 ----------------
 async def _forward(request: Request, kind: str):
+    """免费通道统一入口：校验 → 计额 → 转发上游（chat 支持 SSE 流式，judge 非流式）。
+
+    前端传来的 model / Authorization 一律忽略：模型与 Key 由服务端环境变量决定，
+    玩家 Token 也不会经过本代理（自填 Key 时浏览器直连官方端点）。
+    """
     if not PROXY_TOKEN:
         return _err(503, "PROXY_UNAVAILABLE", "免费通道未配置平台 Key（RG_PROXY_TOKEN），请使用自定义 Key 模式")
 
@@ -177,6 +260,7 @@ async def _forward(request: Request, kind: str):
     # ---- 流式透传（SSE）:台词边生成边显示，缓解长推理模型的等待感 ----
     if stream:
         async def event_gen():
+            """逐行透传上游 SSE；流已开始则以 error 事件通知前端回退本地剧本。"""
             try:
                 async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT, trust_env=False) as client:
                     async with client.stream("POST", API_BASE, json=upstream, headers=headers) as resp:
@@ -237,13 +321,16 @@ async def _forward(request: Request, kind: str):
     return JSONResponse(data)
 
 
+
 @app.post("/api/chat")
 async def api_chat(request: Request):
+    """嫌疑人台词 / 陪审团 / 侧写报告主通道（可流式，占用会话主额度）。"""
     return await _forward(request, "chat")
 
 
 @app.post("/api/judge")
 async def api_judge(request: Request):
+    """「是否戳穿矛盾」AI 裁判通道（强制非流式，占用独立额度）。"""
     return await _forward(request, "judge")
 
 
@@ -251,10 +338,16 @@ async def api_judge(request: Request):
 # 布局：/        → Gradio 入口页（作品介绍 + 开始游戏按钮）
 #       /game/   → 游戏本体（静态托管，index.html 在此）
 #       /api/*   → 免费 AI 代理（/api/chat /api/judge /api/status）
-import gradio as gr  # noqa: E402（延迟导入：本地静态模式无 gradio 也能跑）
+try:
+    import gradio as gr  # noqa: E402（本地静态模式可无 gradio：仅 /game/ + /api/*）
+except ImportError as e:  # 仅 gradio 本身缺失才回退；其内部依赖坏了要在部署时暴露
+    if getattr(e, 'name', None) != 'gradio':
+        raise
+    gr = None
 
 
 def _build_demo():
+    """构建创空间 Gradio 入口页（介绍 + 开始游戏按钮），本地静态模式无 gradio 时跳过。"""
     with gr.Blocks(title="雨夜画廊 · Rain Gallery", theme=gr.themes.Default()) as demo:
         gr.HTML("""
         <div style="text-align:center;font-family:serif;padding:26px 10px 8px;">
@@ -287,13 +380,19 @@ def _build_demo():
     return demo
 
 
-demo = _build_demo()
+demo = _build_demo() if gr is not None else None
 
 # 游戏挂在 /game/（Gradio 占根路径；/api/* 已在 Gradio 挂载前注册，保持可用）
 app.mount("/game", StaticFiles(directory=BASE_DIR, html=True), name="game")
 
-# 统一入口：Gradio 提供根路径 UI + 文档 + 静态资源，原 FastAPI 应用作为宿主
-_root = gr.mount_gradio_app(app, demo, path="/", favicon_path=os.path.join(BASE_DIR, "assets", "favicon.svg"))
+if gr is not None:
+    # 统一入口：Gradio 提供根路径 UI + 文档 + 静态资源，原 FastAPI 应用作为宿主
+    _root = gr.mount_gradio_app(app, demo, path="/", favicon_path=os.path.join(BASE_DIR, "assets", "favicon.svg"))
+else:
+    # 未装 gradio（如 dev-server.sh 探测通过的 .venv-test）：跳过入口页，
+    # 仅提供 /game/ 静态站点与 /api/* 代理，与 dev-server.sh 的探测契约一致
+    print("ℹ 未安装 gradio：跳过入口页，仅提供 /game/ 与 /api/*（本地静态模式）", flush=True)
+    _root = app
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "7860"))

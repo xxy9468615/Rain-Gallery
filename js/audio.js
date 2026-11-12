@@ -7,7 +7,7 @@
  * - 开场 15 秒旁白音频驱动器（带精准时间码与平滑淡出）
  * ============================================================ */
 
-import { storage } from './storage.js?v=3.5.0';
+import { storage } from './storage.js?v=3.6.0';
 
 class AudioEngine {
   constructor() {
@@ -331,6 +331,23 @@ class AudioEngine {
   wrong()      { this.tone(220, 0.25, { type: 'square', vol: 0.06, slide: -80 }); }
   verdict() {
     [262, 330, 392, 523].forEach((f, i) => this.tone(f, 0.6, { type: 'triangle', vol: 0.08, when: i * 0.14 }));
+  }
+  // 结案四档音色：S 上扬号角 / A 沉稳定音 / B 中性收束 / C 下行提示。
+  // 复用现有 tone 基元，零新素材；四档之前只有「A 以上 vs 其他」二值，
+  // 拿 S 和 B 听起来一样（CodeRabbit 抓到）。
+  rankS() {
+    [523, 659, 784, 1047].forEach((f, i) => this.tone(f, 0.5, { type: 'triangle', vol: 0.09, when: i * 0.12 }));
+  }
+  rankA() {
+    [392, 523].forEach((f, i) => this.tone(f, 0.45, { type: 'sine', vol: 0.08, when: i * 0.16 }));
+  }
+  rankB() {
+    this.tone(392, 0.3, { type: 'sine', vol: 0.07 });
+    this.tone(440, 0.35, { type: 'sine', vol: 0.07, when: 0.14 });
+  }
+  rankC() {
+    this.tone(330, 0.3, { type: 'sine', vol: 0.06 });
+    this.tone(247, 0.4, { type: 'sine', vol: 0.06, when: 0.15 });
   }
 
   onThunder(callback) {

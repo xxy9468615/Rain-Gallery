@@ -4,24 +4,28 @@
  * 进度自动保存（SafeStorage 封装 localStorage，无痕模式自动降级内存），重进续玩
  * ============================================================ */
 
-import { CASE } from './case-data.js?v=3.5.0';
-import { audio, scheduleThunder } from './audio.js?v=3.5.0';
-import { storage } from './storage.js?v=3.5.0';
+import { CASE } from './case-data.js?v=3.6.0';
+import { audio, scheduleThunder } from './audio.js?v=3.6.0';
+import { storage } from './storage.js?v=3.6.0';
 import {
   aiSettings, MODEL_OPTIONS, testConnection, STORAGE_MODE,
   onLoadState, validateTokenFormat,
   proxyState, ENDPOINT_MODE, getEndpointMode, setEndpointMode,
   probeProxy, describeEndpoint, rotateSessionId, aiActive,
   getEndpointUrl, setEndpointUrl, validateEndpointUrl, getEndpointWhitelist, setEndpointWhitelist,
+  getProxyBase, setProxyBase, validateProxyBase,
   DEFAULT_ENDPOINT_URL,
-} from './ai-client.js?v=3.5.0';
+} from './ai-client.js?v=3.6.0';
 import {
   suspectState, stageOf, askSuspect, presentToSuspect,
-  greetingOf, juryVerdict, setActionContext, getDecisionLog, applyRel,
-} from './suspect-ai.js?v=3.5.0';
+  greetingOf, juryVerdict, setActionContext, getDecisionLog, applyRel, replaceDecisionLog,
+} from './suspect-ai.js?v=3.6.0';
 import {
   buildProfile, aiProfileReport, radarSVG,
-} from './profiler.js?v=3.5.0';
+} from './profiler.js?v=3.6.0';
+import {
+  requestHint, hintPenalty, hintsLeft, HINT_LIMIT, fallbackHint,
+} from './hint.js?v=3.6.0';
 
 const $ = (id) => document.getElementById(id);
 const SAVE_KEY = 'rain-gallery-save';
@@ -73,6 +77,7 @@ function defaultStats() {
     presentsUnique: 0,       // 出示的不同物证种数
     presentedIds: [],        // 已出示过的物证 id
     evidenceOrder: [],       // 物证发现顺序
+    hintsUsed: 0,            // 求助次数（一局 3 次；computeScore 按次扣分）
   };
 }
 
@@ -107,6 +112,8 @@ function resetGameState() {
   state.found = [];
   state.lostEvidence = [];
   state.dramasSeen = [];
+  // v3.7 · 新开局必须清空上局决策日志，否则终幕摘要会混进旧局的记录
+  replaceDecisionLog([]);
   state.suspects.clear();
   CASE.suspects.forEach((s) => state.suspects.set(s.id, suspectState(s.id)));
   state.crackCount = 0;
@@ -155,6 +162,8 @@ function save() {
     finished: state.finished,
     stats: state.stats || null,
     evaluation: state.evaluation || null,
+    // v3.7 · NPC 决策日志持久化（原为模块级数组，刷新即丢→续玩档摘要变空）
+    decisionLog: getDecisionLog(),
     volunteerNoted: !!state.volunteerNoted,
     sessionId: undefined, // 每次会话独立，不落盘
   };
@@ -177,6 +186,10 @@ function load() {
       volunteerNoted: !!d.volunteerNoted,
     });
     state.resumePhase = d.phase || 'intro'; // 存档 phase 快照（封面展示会改写 state.phase，续玩以快照为准）
+    // v3.7 · 恢复 NPC 决策日志（原为模块级数组，刷新即丢——
+    // 续玩已结案存档时终幕的决策日志摘要会是空的）。
+    // 注意:保存时省略了 key 就不过河拆桥；清档后 load 不会进来。
+    replaceDecisionLog(Array.isArray(d.decisionLog) ? d.decisionLog : []);
     if (d.suspects) {
       Object.entries(d.suspects).forEach(([id, st]) => {
         if (state.suspects.has(id)) {
@@ -515,6 +528,7 @@ function avatarSVG(s, mood = 'calm', { size = 80 } = {}) {
   // 2. 策展助理 —— 陈默
   if (id === 'chenmo') {
     const isShaken = mood === 'shaken';
+    const isDefensive = mood === 'defensive';
     const isBroken = mood === 'broken';
     return `<svg viewBox="0 0 80 80" width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
       <defs>
@@ -556,6 +570,13 @@ function avatarSVG(s, mood = 'calm', { size = 80 } = {}) {
         <circle cx="32.5" cy="50" r="1.4" fill="#a4d1f7"/>
         <path d="M36 47 Q40 49 44 47" stroke="#7a524a" stroke-width="2" fill="none"/>
         <line x1="36" y1="19" x2="38" y2="33" stroke="#1a222a" stroke-width="1.6"/>
+      ` : isDefensive ? `
+        <!-- 防守（压力≥2 且敌意高）：咬牙抿嘴，目光下压不示弱 -->
+        <path d="M28 29 L36 30" stroke="#1d2733" stroke-width="2" fill="none"/>
+        <path d="M44 30 L52 29" stroke="#1d2733" stroke-width="2" fill="none"/>
+        <circle cx="33" cy="35" r="1.9" fill="#161d24"/><circle cx="47" cy="35" r="1.9" fill="#161d24"/>
+        <line x1="36" y1="46.5" x2="44" y2="46.5" stroke="#6b4a45" stroke-width="2.4" stroke-linecap="round"/>
+        <path d="M39.5 27 L40.5 30" stroke="#1d2733" stroke-width="1.1"/>
       ` : isShaken ? `
         <!-- 动摇：眼神慌乱、冷汗滑落、紧绷 -->
         <circle cx="33" cy="36.5" r="1.6" fill="#141a20"/><circle cx="47" cy="36.5" r="1.6" fill="#141a20"/>
@@ -579,6 +600,7 @@ function avatarSVG(s, mood = 'calm', { size = 80 } = {}) {
   // 3. 画廊老板 —— 林曼青
   if (id === 'linmanqing') {
     const isShaken = mood === 'shaken';
+    const isDefensive = mood === 'defensive';
     const isBroken = mood === 'broken';
     return `<svg viewBox="0 0 80 80" width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
       <defs>
@@ -614,6 +636,13 @@ function avatarSVG(s, mood = 'calm', { size = 80 } = {}) {
         <circle cx="33" cy="35.5" r="1.8" fill="#23161f"/><circle cx="47" cy="35.5" r="1.8" fill="#23161f"/>
         <path d="M35 48 Q40 45.5 45 48" stroke="#7a2a35" stroke-width="2.2" fill="none" stroke-linecap="round"/>
         <path d="M48 24 Q44 32 46 42" stroke="#24161f" stroke-width="1.6" fill="none"/>
+      ` : isDefensive ? `
+        <!-- 防守：挑眉不示弱、唇角压平、下颌收紧 -->
+        <path d="M27 27.5 L37 29.5" stroke="#321e29" stroke-width="2.2" fill="none"/>
+        <path d="M43 29.5 L53 27.5" stroke="#321e29" stroke-width="2.2" fill="none"/>
+        <circle cx="33" cy="35" r="2.2" fill="#23161f"/><circle cx="47" cy="35" r="2.2" fill="#23161f"/>
+        <circle cx="26" cy="29" r="1.2" fill="#88b7e0"/>
+        <line x1="35" y1="46.5" x2="45" y2="46.5" stroke="#9e2838" stroke-width="2.8" stroke-linecap="round"/>
       ` : isShaken ? `
         <!-- 动摇：眉头紧锁、神色紧绷焦躁 -->
         <path d="M28 29.5 Q33 26.5 37 28.5" stroke="#321e29" stroke-width="2.2" fill="none"/>
@@ -636,6 +665,7 @@ function avatarSVG(s, mood = 'calm', { size = 80 } = {}) {
 
   // 4. 美院实习生 —— 苏晓
   const isShaken = mood === 'shaken';
+  const isDefensive = mood === 'defensive';
   const isBroken = mood === 'broken';
   return `<svg viewBox="0 0 80 80" width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
     <defs>
@@ -672,6 +702,12 @@ function avatarSVG(s, mood = 'calm', { size = 80 } = {}) {
       <path d="M28 28.5 Q33 25.5 38 29.5" stroke="#251c17" stroke-width="2" fill="none"/>
       <path d="M42 29.5 Q47 25.5 52 28.5" stroke="#251c17" stroke-width="2" fill="none"/>
       <path d="M35 48 Q40 45 45 48" stroke="#8c3a44" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+    ` : isDefensive ? `
+      <!-- 防守（压力≥2 且敌意高）：咬住下唇、眼睫下垂、肩膀内缩 -->
+      <path d="M28 29.5 Q33 27 37 29" stroke="#2c1c24" stroke-width="2" fill="none"/>
+      <path d="M43 29 Q47 27 52 29.5" stroke="#2c1c24" stroke-width="2" fill="none"/>
+      <circle cx="33" cy="34.8" r="2" fill="#1b1512"/><circle cx="47" cy="34.8" r="2" fill="#1b1512"/>
+      <path d="M35 47 Q40 46 45 47" stroke="#8c3a44" stroke-width="2.2" fill="none"/>
     ` : isShaken ? `
       <!-- 动摇：瞳孔地震惊恐、张嘴惊呼、冷汗 -->
       <ellipse cx="33" cy="35" rx="3.6" ry="4" fill="#1b1512"/>
@@ -871,6 +907,96 @@ const ROOM_ART = {
     <circle cx="200" cy="30" r="5" fill="#c4574e"/>
     <circle cx="200" cy="30" r="12" fill="#c4574e" opacity=".15"/>`,
 };
+
+/**
+ * v3.7 · 开场画幅 SVG：雨夜画廊大门。
+ * 原 intro-art 是一个 120px 的空圆 div（CSS 只有两层径向渐变），
+ * 信息量与"设计感"都近乎零。改为可读的场景画幅：
+ *   雨夜天空 / 玻璃大门内透出暖光 / 门侧被划破的画框剪影 / 三条雨带
+ * 延续仓库既有的"纯代码 SVG、零外部素材"路线（规范 §3），
+ * 动效全部走 CSS keyframes（rain-fall / breathe / slash-flash）。
+ */
+function introArtSVG() {
+  // 雨丝：多条不同长度/斜率的线段，避免"同一根复制"的机械感
+  const rain = (count, cls, len, drift, opacity) => Array.from({ length: count }, (_, i) => {
+    const x = ((i * 97) % 100) + (i % 3) * 0.6;
+    const y = ((i * 41) % 100);
+    return `<line class="${cls}" x1="${x}" y1="${y}" x2="${x + drift}" y2="${y + len}"
+      stroke="#9fc2e0" stroke-width=".7" opacity="${opacity}"/>`;
+  }).join('');
+  return `<svg viewBox="0 0 400 200" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+  <defs>
+    <linearGradient id="ig-sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0a0f16"/><stop offset="1" stop-color="#141d28"/>
+    </linearGradient>
+    <radialGradient id="ig-warm" cx="50%" cy="60%" r="55%">
+      <stop offset="0" stop-color="#e8c56a" stop-opacity=".55"/>
+      <stop offset="55%" stop-color="#c8963e" stop-opacity=".18"/>
+      <stop offset="100%" stop-color="#c8963e" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ig-glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2634" stop-opacity=".92"/>
+      <stop offset="1" stop-color="#0b1119" stop-opacity=".98"/>
+    </linearGradient>
+    <clipPath id="ig-door-clip"><rect x="128" y="52" width="144" height="122" rx="3"/></clipPath>
+  </defs>
+
+  <rect width="400" height="200" fill="url(#ig-sky)"/>
+  <!-- 远处街灯：三盏，越远越暗 -->
+  <circle cx="52" cy="58" r="4" fill="#c4a06a" opacity=".35"/>
+  <circle cx="352" cy="46" r="3" fill="#c4a06a" opacity=".22"/>
+  <circle cx="300" cy="72" r="2.5" fill="#c4a06a" opacity=".16"/>
+  <!-- 画廊侧影墙 -->
+  <rect x="40" y="70" width="320" height="104" fill="#0d131c"/>
+  <path d="M40 70 L200 44 L360 70" stroke="#1a2431" stroke-width="2" fill="none"/>
+  <!-- 玻璃大门：门内透暖光 -->
+  <g class="intro-glow">
+    <rect x="128" y="52" width="144" height="122" rx="3" fill="url(#ig-warm)"/>
+  </g>
+  <g clip-path="url(#ig-door-clip)">
+    <rect x="128" y="52" width="144" height="122" fill="url(#ig-glass)"/>
+    <!-- 门内景：远处展墙与一幅画的轮廓 -->
+    <rect x="140" y="112" width="120" height="46" fill="#1d2836" opacity=".7"/>
+    <rect x="164" y="92" width="72" height="42" rx="2" fill="#243244" stroke="#3d4f63" stroke-width="1"/>
+    <rect x="170" y="98" width="60" height="30" fill="#2c3a4c"/>
+    <path d="M170 128 q22 -18 34 -6 t26 -8" stroke="#4a5f75" stroke-width="1.2" fill="none" opacity=".7"/>
+  </g>
+  <!-- 门框 + 双侧门柱 -->
+  <rect x="128" y="52" width="144" height="122" rx="3" fill="none" stroke="#31415a" stroke-width="2.5"/>
+  <line x1="200" y1="52" x2="200" y2="174" stroke="#31415a" stroke-width="2"/>
+  <!-- 门牌：RAIN GALLERY -->
+  <text x="200" y="44" text-anchor="middle" font-size="9" letter-spacing="3"
+    fill="#8fa4bb" font-family="serif" opacity=".85">RAIN GALLERY</text>
+  <!-- 被划破的画框剪影（本案核心意象：画被毁，却没被偷走） -->
+  <g class="intro-slash">
+    <rect x="70" y="104" width="46" height="34" rx="2" fill="none" stroke="#5c6d80" stroke-width="1.5"/>
+    <path d="M72 118 L114 122 M72 124 L112 130" stroke="#c4574e" stroke-width="1.6" opacity=".8"/>
+  </g>
+  <!-- 三级台阶 + 地面反光 -->
+  <rect x="118" y="176" width="164" height="5" rx="2" fill="#1a2431"/>
+  <rect x="110" y="181" width="180" height="5" rx="2" fill="#151e29"/>
+  <rect x="100" y="186" width="200" height="6" rx="2" fill="#101822"/>
+  <ellipse cx="200" cy="192" rx="96" ry="8" fill="#e8c56a" opacity=".08"/>
+  <!-- 雨带：压在最上层，用 CSS 做下落动效 -->
+  <g>${rain(26, 'intro-rain-a', 16, 6, .30)}</g>
+  <g>${rain(20, 'intro-rain-b', 22, 10, .20)}</g>
+  <g>${rain(30, 'intro-rain-c', 12, 4, .38)}</g>
+</svg>`;
+}
+
+/**
+ * v3.7 · 第四头像态：defensive（咬牙抿嘴的防守姿态）。
+ * 原三态只有 calm→shaken→broken，压力跨过 2 时表情直接从
+ * "镇定"跳成"动摇"，中间那段"被戳到、正在咬牙硬撑"的
+ * 过程没有画面。defensive 填这个缝：压力≥2 未崩溃 且 敌意≥60。
+ * 纯函数，只读压力/敌意/阶段，可存档重算。
+ */
+function avatarMood(st) {
+  if (!st) return 'calm';
+  if (stageOf(st) === 'broken') return 'broken';
+  if (st.pressure >= 2 && (st.hostility || 0) >= 60) return 'defensive';
+  return stageOf(st);
+}
 
 function roomArtSVG(room) {
   const art = (ROOM_ART[room.art] || ROOM_ART.atrium)();
@@ -1251,17 +1377,20 @@ function onHotspot(id) {
   save();
 }
 
-function openEvidenceModal(title, found, detail, ev, customArt = null) {  $('evidence-title').innerHTML = title;
-  let implicate = '';
-  if (ev && ev.implicates) {
-    const s = CASE.suspects.find((x) => x.id === ev.implicates);
-    implicate = `<p class="implicate">→ 侦探直觉：这条线索与 <b>${s.name}</b> 的说法存在出入。</p>`;
-  }
+function openEvidenceModal(title, found, detail, ev, customArt = null) {
+  const esc = escapeHtml;
+  $('evidence-title').innerHTML = esc(title);
+  // v3.7.3 · 删掉「侦探直觉：这条线索与 XX 的说法存在出入」。
+  // 11 条物证里 11 条都带 implicates，等于每捡一条线索就附送一次
+  // 「该拿这条去对质谁」——把推理解谜最核心的一步代劳了，难度归零。
+  // 注意：case-data 的 implicates 字段仍保留，suspect-ai.js 的 addCrack
+  // 算分要用它（内部逻辑，不呈现给玩家）。
+  // esc：三个字段目前都来自 CASE 静态字面量，风险低；但与 renderEvalBox 保持
+  // 同一规则，避免以后有 AI/存档内容流进来时漏改（CodeRabbit 抓到不一致）。
   $('evidence-body').innerHTML = `
     ${customArt ? `<div class="evidence-art-wrap" style="text-align:center;margin-bottom:14px;">${customArt}</div>` : ''}
-    <div class="big">${found}</div>
-    ${detail ? `<div class="detail">🔎 ${detail}</div>` : ''}
-    ${implicate}`;
+    <div class="big">${esc(found)}</div>
+    ${detail ? `<div class="detail">🔎 ${esc(detail)}</div>` : ''}`;
   $('modal-evidence').classList.remove('hidden');
 }
 
@@ -1289,7 +1418,8 @@ function renderNotebook() {
  * ============================================================ */
 
 const suspectById = (id) => CASE.suspects.find((s) => s.id === id);
-const MOOD_TEXT = { calm: '🛡 镇定', shaken: '🌀 动摇', broken: '💥 防线崩溃' };
+const evidenceById = (id) => CASE.evidences.find((e) => e.id === id);
+const MOOD_TEXT = { calm: '🛡 镇定', defensive: '😬 咬牙硬撑', shaken: '🌀 动摇', broken: '💥 防线崩溃' };
 
 /* ---------- v3.0 · 三维关系数值条（卡片 + 审讯头部实时可见） ----------
  * 规范 §5：350ms 缓动 / 压力 >80% 震颤红光 / 信任达阈脉冲 / 敌意告警橙边 */
@@ -1317,7 +1447,7 @@ function relBarsHTML(st) {
 function renderSuspectList() {
   $('suspect-list').innerHTML = CASE.suspects.map((s) => {
     const st = state.suspects.get(s.id);
-    const mood = stageOf(st);
+    const mood = avatarMood(st);
     const active = state.activeSuspect === s.id ? ' active' : '';
     const locked = st.lawyerLock ? ' locked' : '';
     return `<button class="suspect-card${active}${locked}" data-suspect="${s.id}" ${st.lawyerLock ? 'title="律师到场，拒绝问话"' : ''} aria-pressed="${state.activeSuspect === s.id}" aria-label="审问 ${s.name}，${s.role}，当前状态${MOOD_TEXT[mood]}">
@@ -1428,7 +1558,7 @@ function selectSuspect(id, force = false) {
   if (state.activeSuspect === id && !force) return;
   const s = suspectById(id);
   const st = state.suspects.get(id);
-  const mood = stageOf(st);
+  const mood = avatarMood(st);
 
   // v3.0 · 律师锁：林曼青叫了律师后无法再选她
   if (st.lawyerLock) {
@@ -1439,6 +1569,9 @@ function selectSuspect(id, force = false) {
   state.activeSuspect = id;
   audio.suspect();
   renderSuspectList();
+  // v3.7 · 证据对峙条：必须放在 state.activeSuspect 赋值之后——
+  // renderEvidenceBar 的前置守卫校验 activeSuspect，放在前面会被判空而隐藏
+  renderEvidenceBar();
 
   const modeText = describeEndpoint();
   const isAI = modeText.startsWith('🎁') || modeText.startsWith('🔑') || modeText.startsWith('🧪');
@@ -1488,6 +1621,9 @@ function showTyping() {
   div.innerHTML = '<i></i><i></i><i></i>';
   stream.appendChild(div);
   stream.scrollTop = stream.scrollHeight;
+  // v3.7 · 头像加「思考中」外圈光环（流式生成全程可见）
+  const av = document.querySelector('.avatar-dialog');
+  if (av) av.classList.add('streaming');
   // 1.6s 后开始轮换斟酌话术(首个 chunk 到达即被 hideTyping 清掉)
   clearInterval(thinkingTimer);
   thinkingIdx = 0;
@@ -1503,40 +1639,110 @@ function hideTyping() {
   clearInterval(thinkingTimer);
   const t = $('typing-bubble');
   if (t) t.remove();
+  const av = document.querySelector('.avatar-dialog');
+  if (av) av.classList.remove('streaming');
 }
 
 let busy = false;
 let lastQuestion = '';
 
-/* ---------- v3.0 · 建议提问气泡（按嫌疑人/已收集证据/未触发破绽动态筛选） ---------- */
+/* ---------- v3.7 · 求助系统（旁白顾问给方向，不给问句） ---------- */
 
+/**
+ * 渲染求助入口。取代原先的「建议提问」chip——
+ * 那套把最优提问原文填进输入框，推理乐趣归零。
+ * 这里只给一个按钮，点开后向 AI 要一个**方向**，
+ * 玩家必须自己把方向翻译成问句。
+ */
 function renderSuggestQuestions() {
   const box = $('suggest-questions');
   if (!box || !state.activeSuspect) return;
-  const s = suspectById(state.activeSuspect);
-  const st = state.suspects.get(state.activeSuspect);
-  const pool = (s.suggestQuestions || [])
-    .filter((item) => {
-      if (!item.tag) return true; // 无标签的通用问题恒可用
-      if (st.triggeredKeys.has(item.tag)) return false; // 已点破的隐藏
-      const idx = Number(item.tag.split(':')[1]);
-      const kh = s.keywordHits[idx];
-      if (!kh) return false;
-      return (kh.requires || []).every((r) => state.found.includes(r)); // 前置物证未收集的隐藏
-    });
-  const picks = pool.slice(0, 3);
-  if (!picks.length) { box.innerHTML = ''; return; }
-  box.innerHTML = `<span class="sq-label">💡 建议提问：</span>` + picks.map((p) =>
-    `<button class="suggest-chip" data-q="${p.q.replace(/"/g, '&quot;')}">${p.q}</button>`).join('');
-  box.querySelectorAll('.suggest-chip').forEach((el) => {
-    el.addEventListener('click', () => {
-      audio.click();
-      const input = $('dialog-input');
-      input.value = el.dataset.q;
-      input.focus();
-    });
-  });
+  const used = state.stats ? state.stats.hintsUsed : 0;
+  const left = hintsLeft(used);
+  if (left <= 0) {
+    box.innerHTML = '<span class="sq-label">🧭 求助次数已用完——剩下的，靠你自己了。</span>';
+    return;
+  }
+  box.innerHTML = `<button class="hint-btn" id="btn-hint">🧭 求助（剩 ${left}/${HINT_LIMIT} 次）</button>`
+    + '<span class="sq-label">旁白只点方向，不替你发问；每次求助将在结案评分中扣 2 分。</span>';
+  const btn = $('btn-hint');
+  if (btn) btn.addEventListener('click', onHintRequest);
 }
+
+/** 点击求助：向 AI 要一个方向，以旁白气泡呈现（不自动填输入框） */
+let hintBusy = false;   // 求助在途守卫：await 期间可切嫌疑人/发问，无守卫会把 A 的旁白落到 B 的对话流里
+async function onHintRequest() {
+  if (hintBusy) return;                       // 已有一条求助在途，禁止并发再点
+  const btn = $('btn-hint');
+  if (btn) btn.disabled = true;
+  // ensureStats 先行：v3.7 之前的旧存档 stats 里没有 hintsUsed 字段，
+  // 直接 +1 会得到 NaN——hintsLeft(NaN)=3（免费求助）、hintPenalty(NaN)=0
+  // （不扣分），NaN 还会随 save() 落盘扩散到 computeScore（CodeRabbit 抓到）
+  const stats = ensureStats();
+  stats.hintsUsed += 1;
+  const used = stats.hintsUsed;
+  const sid = state.activeSuspect;            // 记下发起时的嫌疑人，回来时校验还在不在这间审讯室
+  const box = $('suggest-questions');
+  if (box) box.innerHTML = '<span class="sq-label">⏳ 旁白在观察……</span>';
+
+  const s = suspectById(sid);
+  const st = state.suspects.get(sid);
+  const known = state.found.map((id) => evidenceById(id)).filter(Boolean);
+  hintBusy = true;
+  let out;
+  try {
+    out = await requestHint(s, st, known, used);
+  } catch (e) {
+    out = { text: fallbackHint(), source: 'fallback', left: hintsLeft(used) };
+  } finally {
+    hintBusy = false;
+  }
+  // 等待期间玩家切去了别的审讯室：这条旁白不能落进别人的对话流，
+  // 决策日志也不能记在别人头上——只落回发起时那位（CodeRabbit 抓到）
+  if (state.activeSuspect !== sid) {
+    // 旁白未送达，退回本次额度——否则玩家切回来再问一次要白花一次求助
+    stats.hintsUsed = Math.max(0, stats.hintsUsed - 1);
+    renderSuggestQuestions();   // 立即刷新当前审讯室的可用额度
+    toast('（旁白没能送达——已退回这次求助额度）');
+    save();
+    return;
+  }
+  appendHintBubble(out, used);
+  renderSuggestQuestions();
+  // hintsUsed 是评分输入（computeScore 读它算 hintPenalty），
+  // 必须落盘——否则刷新页面后 3 次额度重置，且已扣过的分凭空消失。
+  save();
+}
+
+/** 旁白气泡：独立的视觉样式，与嫌疑人/系统气泡区分开 */
+function appendHintBubble(out, used) {
+  const stream = $('dialog-stream');
+  if (!stream) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'bubble hint';
+  const tag = document.createElement('span');
+  tag.className = 'hint-tag';
+  tag.textContent = '🧭 旁白';
+  const body = document.createElement('span');
+  body.className = 'hint-body';
+  body.textContent = out.text;                      // textContent：旁白内容一律不走 innerHTML
+  const note = document.createElement('span');
+  note.className = 'hint-fallback';
+  note.textContent = out.source === 'fallback' ? '（离线旁白）' : '';
+  wrap.append(tag, body, note);
+  stream.appendChild(wrap);
+  stream.scrollTop = stream.scrollHeight;
+  audio.discover();
+  logDecisionForHint(out, used);
+}
+
+/** 写进 NPC 决策日志（applyRel 的 note 字段），让终幕叙事也能看到求助行为 */
+function logDecisionForHint(out, used) {
+  const st = state.suspects.get(state.activeSuspect);
+  if (!st) return;
+  applyRel(st, 0, 0, `求助旁白（第 ${used} 次，${out.source}）`);
+}
+
 
 async function sendQuestion(isRetry = false) {
   if (busy || !state.activeSuspect) return;
@@ -1585,6 +1791,7 @@ async function sendQuestion(isRetry = false) {
     // 流式气泡退场(最终以解析后的 reply 为准重绘,避免把 JSON 残留展示给玩家)
     if (streamBubble) { streamBubble.remove(); streamBubble = null; }
     if (res.note) addBubble('system', `⚠ ${res.note}`);
+    renderEvidenceBar();   // 行动(律师锁等)可能已改变对峙条状态
     // v3.0 · AI 裁判命中（与关键词命中并集，共同保证进度下限）
     if (res.judgeHit) {
       const idx = Number(res.judgeHit.tag.split(':')[1]);
@@ -1599,9 +1806,12 @@ async function sendQuestion(isRetry = false) {
     addBubble('suspect', res.text, s.color);
     if (res.cracked) {
       state.crackCount++;
-      const mood = stageOf(st);
+      const mood = avatarMood(st);
       if (mood === 'broken' && !st.confessed) {
         addBubble('system', `【${s.name} 的心理防线已崩溃——继续追问让他吐露实情】`);
+      } else if (mood === 'defensive') {
+        // defensive（咬牙硬撑）此前没有任何阶段提示，玩家感知不到状态变化（CodeRabbit 抓到）
+        addBubble('system', `【${s.name} 神色一僵，咬牙硬撑——他在防备你了】`);
       } else if (mood === 'shaken') {
         addBubble('system', `【${s.name} 开始动摇了】`);
       }
@@ -1646,6 +1856,42 @@ function showAiBlockedModal(detail, retryFn) {
   const d = $('ai-blocked-detail');
   if (d) d.textContent = detail || '未知原因';
   modal.classList.remove('hidden');
+}
+
+/**
+ * v3.7 · 证据对峙条：审讯时常驻的窄栏，点图标直接出示。
+ * 原先出示物证必须打开 #modal-present 弹窗——审到一半要选证，
+ * 弹窗一开就把审讯节奏打断。现在常驻在对话流下方，
+ * 「想到就点」，弹窗保留给需要看全名的场合。
+ */
+function renderEvidenceBar() {
+  const bar = $('evidence-bar');
+  if (!bar) return;
+  if (state.phase !== 'interrogate' || !state.activeSuspect || !state.found.length) {
+    bar.classList.add('hidden');
+    bar.innerHTML = '';
+    return;
+  }
+  const st = state.suspects.get(state.activeSuspect);
+  if (st && st.lawyerLock) {
+    bar.classList.remove('hidden');
+    bar.innerHTML = '<span class="ev-bar-lock">⚖️ 律师在场，拒绝查看任何物证</span>';
+    return;
+  }
+  bar.classList.remove('hidden');
+  bar.innerHTML = '<span class="ev-bar-label">出示：</span>' + state.found.map((id) => {
+    const e = CASE.evidences.find((x) => x.id === id);
+    if (!e) return '';
+    const shown = (st && st.triggeredKeys && st.triggeredKeys.has(`ev:${id}`)) ? ' shown' : '';
+    return `<button class="ev-chip${shown}" data-ev="${id}" title="${e.name}${shown ? '（已出示过）' : ''}"
+      aria-label="出示物证 ${e.name}">${e.icon}</button>`;
+  }).join('');
+  bar.querySelectorAll('.ev-chip').forEach((el) => {
+    el.addEventListener('click', () => {
+      audio.click();
+      doPresent(el.dataset.ev);
+    });
+  });
 }
 
 function openPresentModal() {
@@ -1693,18 +1939,23 @@ async function doPresent(evidenceId) {
     if (res.cracked) triggerStrike();
     addBubble('suspect', res.text, s.color);
     if (res.cracked) state.crackCount++;
-    const mood = stageOf(st);
+    const mood = avatarMood(st);
     if (mood === 'broken' && !st.confessed) {
       addBubble('system', `【${s.name} 的心理防线已崩溃——继续追问让他吐露实情】`);
     }
     renderSuspectList();
     refreshDialogHeadRel(s, st);
-    const curMood = stageOf(st);
+    // 头像态用 avatarMood（与列表/首渲一致）——此前这里还是 stageOf，
+    // 压力≥2 且敌意≥60 时列表显示「咬牙硬撑」、主头像却显示「动摇」（CodeRabbit 抓到）
+    const curMood = avatarMood(st);
     const headAvatar = $('dialog-head').querySelector('.avatar');
     if (headAvatar) {
       headAvatar.className = `avatar avatar-dialog mood-${curMood}${curMood === 'broken' ? ' tension-heartbeat' : ''}`;
       headAvatar.innerHTML = avatarSVG(s, curMood, { size: 54 });
     }
+    // 出示成功后立即刷新对峙条——「已出示」芯片变暗打勾，
+    // 否则玩家看不出出示是否生效，容易重复点（CodeRabbit 抓到）
+    renderEvidenceBar();
     renderSuggestQuestions();
     save();
   } catch (err) {
@@ -1806,30 +2057,141 @@ function computeScore(juryCorrect) {
   const investigate = Math.round((state.found.length / CASE.evidences.length) * 12);
   const interrogation = Math.min(12, state.crackCount * 2);
   const evidenceScore = Math.min(36, keyHits * 6);
-  const total = (culpritOk ? 40 : 0) + evidenceScore + investigate + interrogation;
+  // 求助惩罚：每次 -2、封顶 -6。只从总分扣，不推翻单项分——
+  // 玩家即使求助了，前面的实打实进展仍算数。
+  // 纯函数：只读 state.stats.hintsUsed（会落盘），续玩档可重算。
+  const hints = (state.stats && state.stats.hintsUsed) || 0;
+  const hintCut = hintPenalty(hints);
+  const total = Math.max(0, (culpritOk ? 40 : 0) + evidenceScore + investigate + interrogation - hintCut);
   const rank = CASE.scoring.ranks.find((r) => total >= r.min) || CASE.scoring.ranks[CASE.scoring.ranks.length - 1];
-  return { culpritOk, keyHits, evidenceScore, investigate, interrogation, total, rank };
+  return { culpritOk, keyHits, evidenceScore, investigate, interrogation, hintCut, hintsUsed: hints, total, rank };
 }
 
+/**
+ * v3.7 · 动感计分：四个分项依次点亮、总分 rAF 滚动、评级徽章最后弹出。
+ * 拆成「骨架 + 动画填充」而不是直接 innerHTML 一次性写完——
+ * 终幕是玩家情绪的最高点，静态一坨数字给不出"结算感"。
+ * 动效不阻塞存档：runFinal 里 finish/save 在本函数返回后照常执行。
+ */
 function renderScore(sc) {
   const box = $('score-box');
   box.classList.remove('hidden');
-  box.innerHTML = `
-    <div class="score-rank">${sc.rank.label}</div>
-    <div class="score-rank-desc">${sc.rank.desc}</div>
-    <div class="score-row"><span>凶手指认（${sc.culpritOk ? '✓ 正确' : '✗ 错误'}）</span><b>${sc.culpritOk ? 40 : 0} / 40</b></div>
-    <div class="score-row"><span>定罪证据链（命中关键证据 ${sc.keyHits} 条）</span><b>${sc.evidenceScore} / 36</b></div>
-    <div class="score-row"><span>现场调查（物证 ${state.found.length}/${CASE.evidences.length}）</span><b>${sc.investigate} / 12</b></div>
-    <div class="score-row"><span>审讯攻防（戳穿 ${state.crackCount} 次）</span><b>${sc.interrogation} / 12</b></div>
-    <div class="score-total"><span>综合评分</span><b>${sc.total}</b></div>`;
+
+  const rows = [
+    { label: `凶手指认（${sc.culpritOk ? '✓ 正确' : '✗ 错误'}）`, value: sc.culpritOk ? 40 : 0, max: 40 },
+    { label: `定罪证据链（命中关键证据 ${sc.keyHits} 条）`, value: sc.evidenceScore, max: 36 },
+    { label: `现场调查（物证 ${state.found.length}/${CASE.evidences.length}）`, value: sc.investigate, max: 12 },
+    { label: `审讯攻防（戳穿 ${state.crackCount} 次）`, value: sc.interrogation, max: 12 },
+  ];
+  if (sc.hintCut) {
+    rows.push({ label: `旁白求助（${sc.hintsUsed} 次）`, value: -sc.hintCut, max: 0, penalty: true });
+  }
+
+  // 骨架先落位（高度稳定，动画期间不跳动）
+  // rank.label/desc 来自 CASE.scoring 静态配置，按 escapeHtml 统一处理——
+  // 与 renderEvalBox 同一规则，不留"以后加字段时漏改"的坑（CodeRabbit 抓到）。
+  const esc = escapeHtml;
+  box.innerHTML = `<div class="score-head">SCORE SHEET · 结案评分</div>
+    <div class="score-rank" id="score-rank-badge" hidden>${esc(sc.rank.label)}</div>
+    <div class="score-rank-desc" id="score-rank-desc" hidden>${esc(sc.rank.desc)}</div>
+    ${rows.map((r, i) => `
+      <div class="score-row${r.penalty ? ' score-row-penalty' : ''}" id="score-row-${i}" data-ready="0">
+        <span>${r.label}</span><b class="score-val">${r.penalty ? '-' : ''}0</b><i class="score-bar"><i style="width:0%"></i></i>
+      </div>`).join('')}
+    <div class="score-total" id="score-total"><span>综合评分</span><b class="score-total-val">0</b></div>`;
+
+  // 依次点亮：每行先弹出标签，再数字滚动、进度条增长
+  rows.forEach((r, i) => {
+    setTimeout(() => animateScoreRow($(`score-row-${i}`), r), 220 * (i + 1));
+  });
+  const totalDelay = 220 * (rows.length + 1);
+  setTimeout(() => animateTotal($('score-total'), sc.total), totalDelay);
+  setTimeout(() => {
+    const badge = $('score-rank-badge');
+    const desc = $('score-rank-desc');
+    if (badge) badge.hidden = false;
+    if (desc) desc.hidden = false;
+    // 四档评级各配一段音色：S 上扬号角 / A 沉稳定音 / B 中性收束 / C 下行提示。
+    // 取 label 首字符判级（label 是完整文案如 'S · 镇上传说'，不能整串比较——
+    // 那样恒 false，连 S 级都播失败音，CodeRabbit 抓到过）。
+    const grade = String(sc.rank.label || '').trim().charAt(0).toUpperCase();
+    ({ S: audio.rankS, A: audio.rankA, B: audio.rankB, C: audio.rankC }[grade] || audio.rankB).call(audio);
+  }, totalDelay + 420);
+}
+
+/** 单行动画：数字滚动 + 进度条增长 */
+function animateScoreRow(el, row) {
+  if (!el) return;
+  el.dataset.ready = '1';
+  const valEl = el.querySelector('.score-val');
+  const barEl = el.querySelector('.score-bar > i');
+  const target = row.value;
+  const start = performance.now();
+  const dur = 480;
+  const max = row.max || 1;
+  const tick = (now) => {
+    const k = Math.min(1, (now - start) / dur);
+    const eased = 1 - Math.pow(1 - k, 3);            // easeOutCubic
+    const cur = Math.round(target * eased);
+    if (valEl) valEl.textContent = (row.penalty ? '-' : '') + Math.abs(cur);
+    if (barEl) barEl.style.width = `${Math.min(100, (Math.abs(cur) / max) * 100)}%`;
+    if (k < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+/** 总分滚动（比单行稍慢，落停时更有分量） */
+function animateTotal(el, target) {
+  if (!el) return;
+  const valEl = el.querySelector('.score-total-val');
+  const start = performance.now();
+  const dur = 720;
+  const tick = (now) => {
+    const k = Math.min(1, (now - start) / dur);
+    const eased = 1 - Math.pow(1 - k, 3);
+    if (valEl) valEl.textContent = Math.round(target * eased);
+    if (k < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
 }
 
 function renderTruth() {
   const box = $('truth-box');
   box.classList.remove('hidden');
-  $('timeline').innerHTML = CASE.truth.timeline.map(([tm, ev]) =>
-    `<div class="timeline-item"><time>${tm}</time><span>${ev}</span></div>`).join('');
-  $('reveal').textContent = CASE.truth.reveal.join('\n\n');
+
+  // 时间线：时间徽标 + 轨道节点 + 事件卡片（逐条入场）
+  const tl = $('timeline');
+  tl.innerHTML = '';
+  (CASE.truth.timeline || []).forEach(([tm, ev], i) => {
+    const node = document.createElement('div');
+    node.className = 'tl-node';
+    node.style.setProperty('--i', String(i));
+    const time = document.createElement('time');
+    time.className = 'tl-time';
+    time.textContent = tm;
+    const rail = document.createElement('div');
+    rail.className = 'tl-rail';
+    const dot = document.createElement('span');
+    dot.className = 'tl-dot';
+    rail.append(dot);
+    const card = document.createElement('div');
+    card.className = 'tl-card';
+    const p = document.createElement('p');
+    p.textContent = ev;
+    card.append(p);
+    node.append(time, rail, card);
+    tl.append(node);
+  });
+
+  // 真相正文：首段作导语，其余分段叙述
+  const reveal = $('reveal');
+  reveal.innerHTML = '<div class="reveal-label">真相还原</div>';
+  (CASE.truth.reveal || []).forEach((text, i) => {
+    const p = document.createElement('p');
+    if (i === 0) p.className = 'lead';
+    p.textContent = text;
+    reveal.append(p);
+  });
 }
 
 /* ---------------- AI 侦探能力侧写报告 ---------------- */
@@ -1838,11 +2200,23 @@ function buildBehaviorSnapshot() {
   const stats = ensureStats();
   let confessedCount = 0;
   state.suspects.forEach((st) => { if (st.confessed) confessedCount++; });
+  // v3.7 · 关系数值与阶段也进快照。此前只传 confessed/pressure，
+  // AI 侧写看不到 trust/hostility，就说不出「你在林曼青敌意 70 时仍强行施压」
+  // 这种具体到决策的观察——只剩次数统计，报告容易沦为泛泛的赞美。
   const suspectsState = {};
-  state.suspects.forEach((st, id) => { suspectsState[id] = { confessed: st.confessed, pressure: st.pressure }; });
+  state.suspects.forEach((st, id) => {
+    suspectsState[id] = {
+      confessed: st.confessed,
+      pressure: st.pressure,
+      trust: st.trust,
+      hostility: st.hostility,
+      stage: stageOf(st),
+    };
+  });
   return {
     stats,
     found: state.found,
+    lostEvidence: state.lostEvidence || [],     // 被销毁的物证（苏晓删照等）
     dramasSeen: state.dramasSeen || [],
     crackCount: state.crackCount,
     askedTotal: state.askedTotal,
@@ -1851,6 +2225,34 @@ function buildBehaviorSnapshot() {
     confessedCount,
     usedPresent: stats.presentsTotal > 0,
   };
+}
+
+/**
+ * v3.7 · 能力评估 CTA（用户主动触发）。
+ * 结算与评估分离：评分是规则算分（renderScore 已完成），
+ * 评估是 AI 读整局行为痕迹的侧写——不该自动抢戏。
+ * 已有缓存（续玩档生成过 / 本局点过）则直接渲染报告，不重复调 AI。
+ */
+function renderCapabilityCTA(sc) {
+  const box = $('eval-box');
+  if (!box) return;
+  box.classList.remove('hidden');
+  if (state.evaluation) {
+    // 已生成过：直接重渲染，不重新调 AI（省额度也避免结论前后不一）
+    renderEvalBox(state.evaluation.profile, state.evaluation.report);
+    return;
+  }
+  box.innerHTML = `<div class="cta-card">
+    <div class="cta-title">🧠 侦探能力评估</div>
+    <p class="cta-desc">
+      评分到此为止。接下来这一份由大模型<b>依据你整晚的行为痕迹</b>独立撰写——
+      你在现场怎么搜、审讯时怎么问、如何取舍证据链——它会据此评出五个维度的能力画像。
+      <span class="dim">与上面的综合评分无关，也不影响任何存档。</span>
+    </p>
+    <button id="btn-capability" class="primary-btn pulse-glow">生成我的能力评估</button>
+  </div>`;
+  const btn = $('btn-capability');
+  if (btn) btn.addEventListener('click', () => { audio.click(); renderEvaluationReport(sc); });
 }
 
 async function renderEvaluationReport(sc) {
@@ -1870,7 +2272,7 @@ async function renderEvaluationReport(sc) {
     // v3.2 · 仅 AI 模式：侧写报告不再回退本地模板，给出重试入口
     box.innerHTML = `<div class="eval-error">
       <div class="eval-title">🕵️ 侦探能力侧写报告</div>
-      <p>⚠ 能力侧写需要 AI 通道（${(err && (err.message || err.code)) || '未知错误'}）。</p>
+      <p>⚠ 能力侧写需要 AI 通道（${escapeHtml((err && (err.message || err.code)) || '未知错误')}）。</p>
       <p class="dim">审讯/评分/真相已全部保存，重新接入网络后可单独重试生成。</p>
       <button id="btn-eval-retry" class="primary-btn">↻ 重试生成侧写</button>
     </div>`;
@@ -1879,30 +2281,57 @@ async function renderEvaluationReport(sc) {
   }
 }
 
+/** HTML 转义：AI 生成的报告文本进入 innerHTML 前统一转义，避免破坏结构 */
+function escapeHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
+}
+
 function renderEvalBox(profile, report) {
   const box = $('eval-box');
   if (!box) return;
   box.classList.remove('hidden');
+  const esc = escapeHtml;
   const modeTag = '<span class="eval-mode ai">🤖 AI 深度侧写</span>';
-  const strengthsHtml = (report.strengths || []).map((s) => `
+  const strengthsHtml = (report.strengths || []).map((s, i) => `
     <div class="eval-strength">
-      <div class="es-name">长板 · ${s.name}</div>
-      <div class="es-text">${s.text}</div>
+      <div class="es-name"><span class="es-no">0${i + 1}</span>长板 · ${esc(s.name)}</div>
+      <div class="es-text">${esc(s.text)}</div>
     </div>`).join('');
+  const dimsHtml = (profile.labels || []).map((label, i) => {
+    const v = Math.max(0, Math.min(100, Number(profile.dims[i]) || 0));
+    return `
+      <div class="dim-row">
+        <span>${esc(label)}</span>
+        <i><b style="width:${Math.max(2, v)}%"></b></i>
+        <em>${v}</em>
+      </div>`;
+  }).join('');
   box.innerHTML = `
     <div class="eval-head">
-      <div class="eval-title">🕵️ 侦探能力侧写报告</div>
+      <div>
+        <div class="eval-kicker">DETECTIVE PROFILE · 结案能力档案</div>
+        <div class="eval-title">🕵️ 侦探能力侧写报告</div>
+      </div>
       ${modeTag}
     </div>
     <div class="eval-grid">
-      <div class="eval-radar">${radarSVG(profile)}</div>
-      <div class="eval-main">
-        <div class="eval-style"><span class="es-label">思维风格</span><b>${report.title}</b><span class="es-note">${report.note || ''}</span></div>
-        <div class="eval-strengths">${strengthsHtml}</div>
-        <div class="eval-blind"><span class="eb-label">盲区提醒</span>${report.blind || ''}</div>
-        <div class="eval-advice"><span class="ea-label">下一案建议</span>${report.advice || ''}</div>
+      <div class="eval-radar">
+        <div class="radar-label">五维能力画像</div>
+        ${radarSVG(profile)}
+        <div class="dims-bars">${dimsHtml}</div>
       </div>
-    </div>`;
+      <div class="eval-main">
+        <div class="eval-style"><span class="es-label">思维风格</span><b>${esc(report.title)}</b><span class="es-note">${esc(report.note || '')}</span></div>
+        <div class="eval-strengths">${strengthsHtml}</div>
+        <div class="eval-notes">
+          <div class="eval-blind"><span class="eb-label">盲区提醒</span>${esc(report.blind || '')}</div>
+          <div class="eval-advice"><span class="ea-label">下一案建议</span>${esc(report.advice || '')}</div>
+        </div>
+      </div>
+    </div>
+    <div class="eval-foot">由 AI 依据整局行为痕迹生成 · 与综合评分无关</div>`;
 }
 
 /* ---------------- v3.0 · 差异化尾声（按最终关系值触发） ---------------- */
@@ -1942,7 +2371,8 @@ function decisionLogDigest() {
   if (!log.length) return null;
   const lines = log.slice(-12).map((e) => {
     const tag = {
-      rel_event: '· 关系事件', judge: '· AI裁判', hand_over_photo: '· ✅交出照片',
+      rel_event: '· 关系事件', judge: '· AI裁判', keyword_hit: '· 🎯规则层命中',
+      hand_over_photo: '· ✅交出照片',
       delete_photo: '· 💥删除照片', call_lawyer: '· ⚖️叫律师', volunteer_info: '· 🤝主动交代',
       shift_blame: '· 🎯祸水东引', request_storage: '· 🚪请求去储物间',
     }[e.action] || `· ${e.action}`;
@@ -1965,6 +2395,49 @@ function sanitizeJuryText(text) {
   return raw;
 }
 
+/**
+ * 合议庭进行中的可视化：分步状态 + 不定进度条 + 实时计时。
+ * 返回 stop()，拿到陈词后清掉计时器；失败路径也必须调用，避免定时器泄漏。
+ */
+function startJuryPending() {
+  const box = $('jury-box');
+  if (!box) return () => {};
+  box.innerHTML = `
+    <div class="jury-pending">
+      <div class="jury-seal" aria-hidden="true">⚖</div>
+      <div class="jury-pending-title">合议庭正在评议</div>
+      <div class="jury-steps" role="status" aria-live="polite">
+        <span class="jury-step active">核对证据链</span>
+        <span class="jury-step">还原时间线</span>
+        <span class="jury-step">合议判定</span>
+      </div>
+      <div class="jury-progress" aria-hidden="true"><i></i></div>
+      <div class="jury-elapsed">已等待 <b>0.0</b>s · 结案陈词由 AI 现场生成</div>
+    </div>`;
+  const steps = Array.from(box.querySelectorAll('.jury-step'));
+  const elapsedEl = box.querySelector('.jury-elapsed b');
+  const t0 = performance.now();
+  let current = 0;
+  const timer = setInterval(() => {
+    const sec = (performance.now() - t0) / 1000;
+    if (elapsedEl) elapsedEl.textContent = sec.toFixed(1);
+    // 每 2.6s 点亮下一步（拿不到真实进度，用节奏给玩家「仍在推进」的确定感）
+    const next = Math.min(steps.length - 1, Math.floor(sec / 2.6));
+    if (next > current) {
+      steps[current].classList.remove('active');
+      steps[current].classList.add('done');
+      current = next;
+      steps[current].classList.add('active');
+    }
+  }, 250);   // 250ms 足够：秒数显示一位小数，步骤按经过时间（2.6s/步）推进，
+             // 与刷新频率解耦。100ms 时 90% 的 tick 只是重复写同一个字符串
+             // （CodeRabbit 建议降频，低风险纯收益）
+  return () => {
+    clearInterval(timer);
+    if (elapsedEl) elapsedEl.textContent = ((performance.now() - t0) / 1000).toFixed(1);
+  };
+}
+
 async function runFinal() {
   showPhase('final');
   const accusedSuspect = suspectById(state.accused);
@@ -1977,6 +2450,7 @@ async function runFinal() {
     const s = suspectById(id);
     digestParts.push(`${s.name}：被戳穿 ${st.pressure} 次${st.confessed ? '，已完整坦白' : `，情绪${stageOf(st)}`}，信任 ${st.trust}、敌意 ${st.hostility}`);
   });
+  const stopJuryPending = startJuryPending();
   let jury;
   try {
     jury = await juryVerdict({
@@ -1989,6 +2463,7 @@ async function runFinal() {
       epilogue: state.epilogue,
     });
   } catch (err) {
+    stopJuryPending();
     // v3.2 · 仅 AI 模式：结案陈词需 AI，失败则退回指认幕并提示重试
     showPhase('accuse');
     const msg = (err && err.message) || 'AI 通道不可用';
@@ -1996,7 +2471,11 @@ async function runFinal() {
     return;
   }
 
+  stopJuryPending();
+  $('jury-box').innerHTML = '';
   $('final-title').textContent = jury.isCorrect ? '真相只有一个' : '陪审团合议完毕';
+  // 结案陈词落定的一声与评级脱钩：无论对错都是"卷宗封存"的重量。
+  // 评级音色交给 renderScore 末尾的朱印出场（四档各不相同）。
   audio.verdict();
   const sc = computeScore(jury.isCorrect);
   await typeText($('jury-box'), sanitizeJuryText(jury.text), 24);
@@ -2011,7 +2490,11 @@ async function runFinal() {
       <div class="epilogue-text">${(state.epilogue || '').replace('【关系尾声】\n', '')}</div>
       ${logDigest ? `<details class="decision-log"><summary>🧪 NPC 决策日志（AI 决策 × 规则层校验，共 ${getDecisionLog().length} 条）</summary><pre>${logDigest.replace(/^.*：\n/, '')}</pre></details>` : ''}`;
   }
-  await renderEvaluationReport(sc);
+  // v3.7 · 能力评估改为用户主动触发（不再自动跑）：
+  // 结算与评估是两件事——评分是规则算分，评估是 AI 读整局行为痕迹的侧写。
+  // 自动触发会让玩家在还没读完真相时就被一份 380 字的报告打断。
+  // 已生成过的（state.evaluation 有缓存）仍直接渲染，续玩档不重复生成。
+  renderCapabilityCTA(sc);
   state.finished = true;
   save();
   // 密钥安全：结案后自动销毁策略（0 保留，进度/报告已先行落盘）
@@ -2095,6 +2578,10 @@ function syncEndpointUI() {
     freeOpt.disabled = true;
   }
   if (customBlock) customBlock.classList.toggle('dim', mode !== ENDPOINT_MODE.CUSTOM);
+  // 免费通道实际模型说明随模式/探测结果刷新——此前只在 initSettings 调一次，
+  // 切模式/存 Token/重探测后仍显示旧文案（CodeRabbit 抓到）。
+  // syncEndpointUI 是这些路径的共同汇合点，挂这里一劳永逸。
+  showFreeChannelModel();
 }
 
 function initSettings() {
@@ -2131,6 +2618,27 @@ function initSettings() {
     custom.value = current; custom.textContent = `自定义：${current}`;
     sel.appendChild(custom); sel.value = current;
   } else sel.value = current;
+
+  /* v3.7 · 模型 ID 输入框 + 测试按钮 */
+  const modelInput = $('settings-model-id');
+  const testModelBtn = $('btn-test-model');
+  if (modelInput) {
+    // 同步当前模型：白名单内的也填进去，省得玩家想微调时还要先切到自定义
+    modelInput.value = current;
+    const syncCustomState = () => {
+      const isCustom = sel.value === '__custom__';
+      modelInput.classList.toggle('is-custom', isCustom);
+      if (isCustom && !modelInput.value) modelInput.focus();
+    };
+    syncCustomState();
+    sel.addEventListener('change', () => {
+      syncCustomState();
+      // 切到白名单项时同步输入框，避免「下拉显示 X、输入框留着 Y」的割裂
+      if (sel.value !== '__custom__') modelInput.value = sel.value;
+    });
+  }
+  // 免费通道模型展示：让玩家知道免费通道实际在打哪个模型
+  showFreeChannelModel();
 
   // 存储模式单选同步
   const curMode = aiSettings.getStorageMode();
@@ -2193,6 +2701,28 @@ function initSettings() {
     wlInput.value = getEndpointWhitelist().join('\n');
   }
 
+  /* v3.6 · 免费通道代理基址：初始化 + 实时校验 */
+  const pbInput = $('settings-proxy-base');
+  if (pbInput) {
+    pbInput.value = getProxyBase();
+    const reflectProxy = () => {
+      const hint = $('proxy-base-hint');
+      if (!hint) return;
+      const raw = pbInput.value.trim();
+      if (!raw) {
+        hint.textContent = '✓ 同源（默认）——适合后端与前端同域部署';
+        hint.className = 'hint-line ok-text';
+        return;
+      }
+      const check = validateProxyBase(raw);
+      hint.textContent = check.ok ? `✓ 代理基址：${check.origin}` : `✗ ${check.message}`;
+      hint.className = `hint-line ${check.ok ? 'ok-text' : 'err-text'}`;
+    };
+    pbInput.addEventListener('input', reflectProxy);
+    pbInput.addEventListener('blur', reflectProxy);
+    reflectProxy();
+  }
+
   // 明文切换
   const visBtn = $('btn-toggle-token-vis');
   if (visBtn) {
@@ -2221,7 +2751,9 @@ function initSettings() {
       return;
     }
 
-    // v3.5 · 端点与白名单校验（不合格不落盘，避免把 Token 发往非法地址）
+    // ── 阶段一：全部校验。任何一项失败都只报错返回，绝不写任何存储 ──
+    // 顺序很重要：以前把"校验"和"落盘"交织在一起，端点已写进 localStorage
+    // 之后才发现代理基址不合法 → 这次"保存失败"却把 Token 下次请求发往新端点。
     const epVal = epInput ? epInput.value.trim() : '';
     if (epVal) {
       const check = validateEndpointUrl(epVal);
@@ -2230,33 +2762,68 @@ function initSettings() {
         st.textContent = `✗ 端点未保存：${check.message}`;
         return;
       }
-      setEndpointUrl(epVal);
-    } else {
-      setEndpointUrl('');
     }
+
+    // v3.6 · 代理基址校验（同样必须在校验段，避免部分落盘）
+    const proxyRaw = pbInput ? pbInput.value.trim() : '';
+    if (proxyRaw) {
+      const check = validateProxyBase(proxyRaw);
+      if (!check.ok) {
+        st.className = 'err';
+        st.textContent = `✗ 代理基址未保存：${check.message}`;
+        return;
+      }
+    }
+
+    // v3.7.1 · 模型 ID 解析与校验也必须在校验段——此前它排在阶段二落盘之后，
+    // 选了「自定义」没填 ID 时报错返回，但端点/基址/Token 已写入：
+    // 玩家看到红色"✗"以为没保存，实际下一次请求已经发往新配置（CodeRabbit 抓到）
+    let model = sel.value;
+    const typedEl = $('settings-model-id');
+    if (typedEl && typedEl.value.trim()) {
+      model = typedEl.value.trim();
+    } else if (sel.value === '__custom__') {
+      // 选了「自定义」却没填任何值 → 拦下，不落任何盘
+      st.className = 'err';
+      st.textContent = '✗ 选择了「自定义模型」但没填 ID——请填入模型 ID，或改选列表中的模型';
+      return;
+    }
+
+    // ── 阶段二：全部通过，才统一落盘 ──
+    // 代理基址归一为 origin 后再存，保证 proxyUrl() 拼接不会落入 path/query/hash
+    const prevProxy = getProxyBase();
+    if (epVal) setEndpointUrl(epVal); else setEndpointUrl('');
     if (wlInput) setEndpointWhitelist(wlInput.value);
+    if (pbInput) setProxyBase(proxyRaw);
+    const proxyChanged = pbInput ? getProxyBase() !== prevProxy : false;
 
     const mode = modeEnc && modeEnc.checked ? STORAGE_MODE.ENCRYPTED : STORAGE_MODE.MEMORY;
     await aiSettings.setToken(rawToken, mode);
 
-    let model = sel.value;
-    if (model === '__custom__') {
-      model = (await gamePrompt('输入模型 ID（如 Qwen/Qwen3-8b）：', {
-        title: '自定义模型 ID',
-        placeholder: 'Qwen/Qwen3-8b',
-      })) || aiSettings.getModel();
-    }
+    // 模型 ID 已在阶段一解析并校验通过（输入框优先，存什么读什么）
     aiSettings.setModel(model);
+    if (typedEl) typedEl.value = model;
 
     updateAIBadge();
     updateIntroAICard();
+    // v3.6 · 代理基址变更后免费通道可用性需重新探测（原结论基于旧地址）
+    if (proxyChanged) {
+      st.className = 'ok';
+      st.textContent = '↻ 正在重新探测免费通道…';
+      await probeProxy();
+      syncEndpointUI();
+      updateAIBadge();
+      updateIntroAICard();
+    }
     const modeDesc = mode === STORAGE_MODE.ENCRYPTED ? '已启用 AES-GCM-256 加密存储' : '已启用纯内存阅后即焚模式';
     st.className = 'ok';
     st.textContent = aiSettings.hasToken()
       ? `✓ 已保存（${modeDesc}，AI 实时扮演生效）`
-      : (proxyState.available
+      : (proxyState.checked && proxyState.available
         ? '✓ 已保存（未填 Token，将使用内置免费通道）'
-        : '⚠ 未接入任何 AI 通道：本作仅支持 AI 模式，请填写 Token 或等待免费通道恢复');
+        : (proxyState.checked
+          ? '⚠ 未接入任何 AI 通道：免费通道不可用，本作仅支持 AI 模式，请填写 Token'
+          : '⚠ 未接入任何 AI 通道：免费通道探测未完成，请点「测试连接」重试'));
     // 引导链路收尾：配置成功 → 小手退场
     if (aiSettings.hasToken() && handTarget) {
       hideHand();
@@ -2265,6 +2832,45 @@ function initSettings() {
     }
     save();
   });
+
+  /* v3.7 · 「测试该模型」：用输入框里的模型 ID 发一次最小请求。
+   * 只测不存——玩家可能只是想看看某个 ID 能不能用，未必想切过去。
+   * 免费通道模式下模型由服务端强制，这里给出明确说明，不让玩家误判。 */
+  if (testModelBtn && modelInput) {
+    testModelBtn.addEventListener('click', async () => {
+      const id = modelInput.value.trim();
+      const st = $('settings-status');
+      if (!id) {
+        st.className = 'err';
+        st.textContent = '✗ 先填入要测试的模型 ID';
+        return;
+      }
+      const customMode = getEndpointMode() === ENDPOINT_MODE.CUSTOM;
+      if (!customMode || !aiSettings.hasToken()) {
+        st.className = 'err';
+        st.textContent = '✗ 测试模型需要「自定义」模式且已填 Token（免费通道的模型由服务端决定，前端不可选）';
+        return;
+      }
+      st.className = 'ok';
+      st.textContent = `⏳ 正在用 ${id} 测试…`;
+      const prev = aiSettings.getModel();
+      aiSettings.setModel(id);
+      try {
+        // testConnection 成功只返回 {reply, latency}，失败直接抛结构化异常——
+        // 没有 ok/ms/message 字段。原先读 r.ok 恒为 undefined，每个可用模型
+        // 都被判成「不可用」，测试按钮形同虚设（CodeRabbit 抓到）。
+        const r = await testConnection(aiSettings.getToken(), id);
+        st.className = 'ok';
+        st.textContent = `✓ ${id} 可用（${r.latency}ms）`;
+      } catch (e) {
+        st.className = 'err';
+        st.textContent = `✗ 测试失败：${(e && e.message) || '未知错误'}`;
+      } finally {
+        aiSettings.setModel(prev);   // 只测不改，恢复原模型
+        updateAIBadge();
+      }
+    });
+  }
 
   // 销毁 Token（游戏内确认弹窗 · 0 保留确认）
   const clearBtn = $('btn-clear-settings');
@@ -2310,7 +2916,9 @@ function initSettings() {
     if (!token) { st.className = 'err'; st.textContent = '✗ 请先填写 Token'; return; }
     st.className = ''; st.textContent = '⏳ 正在向魔搭官方端点测试推理…';
     try {
-      const model = sel.value === '__custom__' ? aiSettings.getModel() : sel.value;
+      // v3.7 · 模型取值：输入框优先（里面通常就是玩家想测的那个），否则下拉/当前模型
+      const typedModel = ($('settings-model-id') && $('settings-model-id').value.trim()) || '';
+      const model = typedModel || (sel.value === '__custom__' ? aiSettings.getModel() : sel.value);
       const { reply, latency } = await testConnection(token, model);
       st.className = 'ok';
       st.textContent = `✓ 连通成功！延迟 ${latency}ms（回复：${reply.slice(0, 20)}）`;
@@ -2319,6 +2927,33 @@ function initSettings() {
       st.textContent = `✗ ${err.message || err.code || '连接失败'}`;
     }
   });
+}
+
+/**
+ * v3.7 · 在模型 ID 输入框旁显示免费通道实际在用的模型。
+ * 免费通道的模型由服务端 _forward 强制（前端传什么都不作数），
+ * 所以必须明示——否则玩家看到下拉里默认的 Qwen3.8-Flash，
+ * 以为在用那个，实际打的是 spark-x2.6。
+ */
+function showFreeChannelModel() {
+  const note = $('free-model-note');
+  if (!note) return;
+  note.classList.remove('hidden');
+  const current = getEndpointMode();
+  if (current === ENDPOINT_MODE.CUSTOM && aiSettings.hasToken()) {
+    note.textContent = '当前为自定义 Key 模式，上方模型 ID 完全由你决定。';
+    note.className = '';
+    return;
+  }
+  const m = proxyState.model || '';
+  if (proxyState.checked && proxyState.available && m) {
+    note.textContent = `（免费通道当前实际使用：${m}——由服务端决定，前端不可选；填了自定义 Key 后才可自行指定。）`;
+  } else if (proxyState.checked) {
+    note.textContent = '（免费通道暂不可用；下方自定义 Key 模式可自行指定模型。）';
+  } else {
+    note.textContent = '（免费通道探测中……）';
+  }
+  note.className = 'free-model-note';
 }
 
 function initVisualizerAndAudioControls() {
@@ -2521,12 +3156,10 @@ function resumeGamePhase() {
     const sc = computeScore(state.accused === CASE.truth.culprit);
     renderScore(sc);
     renderTruth();
-    // 存档中已有侧写报告 → 直接重渲染，不再调 AI
-    if (state.evaluation && state.evaluation.profile && state.evaluation.report) {
-      renderEvalBox(state.evaluation.profile, state.evaluation.report);
-    } else {
-      renderEvaluationReport(sc);
-    }
+    // v3.7 · 评分重算（computeScore 是纯函数，只读落盘字段）；
+    // 评估按需触发——renderCapabilityCTA 内部识别 state.evaluation
+    // 有缓存就直出报告，没有才显示 CTA 按钮。
+    renderCapabilityCTA(sc);
   } else if (state.phase === 'invest') {
     gotoInvest();
   } else if (state.phase === 'interrogate') {
@@ -2817,6 +3450,11 @@ async function boot() {
   initModalAccessibility();      // 弹窗焦点圈定 / ESC 关闭 / 焦点归还
   initLoadQueueUI();
   initTokenSafety();
+  // v3.7 · 开场画幅注入（原为 CSS 空圆，信息量近乎零）
+  // 注意：intro-art 是 class 不是 id，必须 querySelector——
+  // 这里用 $('intro-art') 取过一次 null，导致画幅静默不显示。
+  const introArt = document.querySelector('.intro-art');
+  if (introArt && !introArt.childElementCount) introArt.innerHTML = introArtSVG();
 
   const has = load();
   setupIntroGateway(has);

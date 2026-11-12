@@ -2,16 +2,17 @@
  * 场景 A:养苏晓信任(温和对话)→ 触发 hand_over_photo → 线索册 11/11
  * 场景 B:审林曼青(高压质问)→ 触发 call_lawyer → 卡片锁定
  * 场景 C:审陈默(连戳矛盾)→ 触发 shift_blame → 苏晓压力 +1
- * 依赖:本地服务已带 .evn 配置启动(app.py)
- */
+ * 依赖:本地服务已带 .env 配置启动(app.py)
  *
  * 依赖 playwright-core(仅本地测试用,不属于游戏运行时):
- *   npm i --no-save playwright-core   # 需要本机 Chrome
- * 运行(服务端需带 .evn 配置启动):
- *   node tools/e2e-npc.mjs
-import { chromium } from 'playwright-core';
+ *   npm i --no-save playwright-core   # 另需本机 Chrome/Chromium
+ * 运行(服务端需带 .env 配置启动):
+ *   node tools/e2e-npc.mjs [http://127.0.0.1:8092]
+ * 浏览器探测顺序见 tools/_browser.mjs（CHROME_PATH 可显式指定）
+ */
+import { launchBrowser } from './_browser.mjs';
 const BASE = process.argv[2] || 'http://127.0.0.1:8092';
-const b = await chromium.launch({ headless: true, executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe' });
+const b = await launchBrowser();
 const p = await b.newPage();
 const errs = [];
 p.on('pageerror', (e) => errs.push(String(e).slice(0, 120)));
@@ -58,10 +59,12 @@ async function relOf(name) {
 }
 
 // ---- 启动 & 准备 ----
-await p.goto(BASE + '/?e2e=npc', { waitUntil: 'domcontentloaded' });
+// 游戏本体挂在 /game/（Gradio 占根路径，_api_server.py 无 gradio 时根路径直接 404）
+const GAME = `${BASE.replace(/\/$/, '')}/game/?e2e=npc`;
+await p.goto(GAME, { waitUntil: 'domcontentloaded' });
 await p.waitForTimeout(2600);
 await p.evaluate(() => { localStorage.clear(); const g = document.querySelector('#btn-guide-skip'); if (g) g.click(); });
-await p.goto(BASE + '/?e2e=npc', { waitUntil: 'domcontentloaded' });
+await p.goto(GAME, { waitUntil: 'domcontentloaded' });
 await p.waitForTimeout(2600);
 await p.evaluate(() => document.querySelector('#btn-begin-game').click());
 await p.waitForTimeout(700);

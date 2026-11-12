@@ -118,7 +118,7 @@ if (!SKIP_PROXY) {
     t(typeof content === 'string' && content.length > 0, 'chat 返回 choices[0].message.content',
       content ? `${content.length} 字` : r.text.slice(0, 80));
     // 契约：后端忽略前端 model / Authorization，免费通道模型由服务端决定
-    // 注意 maxTokens 给足：推理模型（spark-x2.6）会先消耗预算做思维链，
+    // 注意 maxTokens 给足：推理模型的思维链会先消耗预算，
     // 给 30 会被思考耗尽导致 content 为空、后端按 BAD_UPSTREAM 返回 502。
     // 上游偶发空 content 属已知抖动（实测 5 次中约 1 次），重试 3 次，
     // 只要有一次成功即证明"伪造参数未影响后端选型"。
@@ -235,8 +235,13 @@ if (FULL) {
 section('C · 出站沙箱守卫（源码静态校验）');
 {
   const src = readFileSync(resolve(ROOT, 'js/ai-client.js'), 'utf8');
-  t(src.includes("const REQUIRED_ORIGIN = 'https://api-inference.modelscope.cn'"),
-    'ai-client 定义了 REQUIRED_ORIGIN 白名单');
+  // v3.6 起白名单由玩家在设置里配置（getEndpointWhitelist），不再是硬编码常量；
+  // 守卫的关键性质是「白名单为空时放行、非空时严格执行」+ 协议/userinfo 校验。
+  t(/getEndpointWhitelist\(\);\s*\n\s*if \(whitelist\.length && !whitelist\.includes/.test(src),
+    '出站守卫按用户白名单校验（白名单为空时放行）');
+  t(/u\.protocol !== 'https:' && u\.protocol !== 'http:'/.test(src), '出站守卫拒绝非 http(s) 协议');
+  t(/u\.username \|\| u\.password/.test(src), '出站守卫拒绝 URL 内嵌凭据');
+  t(/chat\\\/completions/.test(src), '出站守卫校验 OpenAI 兼容路径');
   t(/guard|sandbox|沙箱/.test(src), 'ai-client 含出站守卫逻辑');
   // 不该出现把 Token 写到 console/localStorage 明文的代码
   const leaks = src.match(/console\.(log|info|warn|error|debug)\([^)]*\bmemoryToken\b/) || [];

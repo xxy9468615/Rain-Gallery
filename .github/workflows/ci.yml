@@ -34,6 +34,10 @@ jobs:
       - name: 运行静态校验
         run: node tools/check-syntax.mjs
 
+      # 免费通道代理基址 / CORS 修复回归：零外部依赖、不需后端、不消耗上游额度
+      - name: 运行代理基址 / CORS 修复回归
+        run: node tools/proxy-base-test.mjs
+
       - name: 校验 pre-commit 钩子内容有效
         run: |
           test -f tools/hooks/pre-commit

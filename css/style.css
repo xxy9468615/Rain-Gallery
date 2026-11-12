@@ -29,10 +29,22 @@
   --status-trust: #22c55e;
   --status-enmity: #f97316;
 
-  /* 字体（规范 §3 · 零外部请求，未安装自动回退系统字体） */
-  --serif: "Cinzel", "Songti SC", "Noto Serif CJK SC", "Noto Serif SC", serif;
-  --sans: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
-  --mono: "JetBrains Mono", "SFMono-Regular", "Cascadia Mono", "Courier New", monospace;
+  /* 字体（规范 §3 · 零外部请求，未安装自动回退系统字体）
+   * v3.7 · 补齐三大平台的「实际预装」字体到栈内。
+   * 原栈只有 Cinzel/Inter/JetBrains Mono——这三款在绝大多数机器上
+   * 并未安装，于是标题静默落到 CJK 衬线（Songti SC / 微软雅黑），
+   * 设计意图的拉丁字形完全没生效。这里按平台各补一个真实存在的衬线：
+   *   macOS   Hoefler Text / Optima
+   *   Windows 宋体系列里的衬线（SimSun 系）→ 改用更现代的 Constantia/Sitka
+   *   Linux   Liberation Serif / DejaVu Serif（几乎所有发行版预装）
+   * 若日后通过 assets/fonts/ 自托管子集（fonttools 可用时），
+   * 把对应 @font-face 加在下面，Cinzel 就会真正接管拉丁字形。 */
+  --serif: "Cinzel", "Songti SC", "Noto Serif CJK SC", "Noto Serif SC",
+           "Constantia", "Sitka", "Hoefler Text", "Liberation Serif", "DejaVu Serif", serif;
+  --sans: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+          "Segoe UI", "Helvetica Neue", "Liberation Sans", "DejaVu Sans", system-ui, sans-serif;
+  --mono: "JetBrains Mono", "SFMono-Regular", "Cascadia Mono", "Consolas",
+          "Liberation Mono", "DejaVu Sans Mono", "Courier New", monospace;
 
   --shadow: 0 12px 40px rgba(0, 0, 0, .5);
 }
@@ -255,18 +267,32 @@ button { font-family: var(--sans); }
 .phase { animation: fadein .5s ease; }
 @keyframes fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; } }
 
-.intro-wrap { max-width: 640px; margin: 4vh auto 0; text-align: center; }
+.intro-wrap { max-width: 720px; margin: 3vh auto 0; text-align: center; }
+/* v3.7 · 开场画幅：原为 120px 圆（信息量几乎为零），
+ * 改为全宽「雨夜画廊大门」画幅——雨丝、门内暖光、被划破的画框剪影。
+ * 纯 SVG/渐变，零外部素材（规范 §3）。 */
 .intro-art {
-  width: 120px; height: 120px; margin: 0 auto 10px;
-  border-radius: 50%; border: 1px solid var(--line);
-  background:
-    radial-gradient(circle at 35% 30%, #243244 0 28%, transparent 30%),
-    radial-gradient(circle at 68% 62%, #1b2f42 0 22%, transparent 24%),
-    linear-gradient(160deg, #101823, #0b0f15);
-  box-shadow: inset 0 0 30px rgba(122, 165, 196, .15), var(--shadow);
-  animation: breathe 5s ease-in-out infinite;
+  width: 100%; height: clamp(140px, 26vh, 210px); margin: 0 auto 14px;
+  border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  position: relative; box-shadow: inset 0 1px 0 rgba(255,255,255,.05), var(--shadow);
 }
-@keyframes breathe { 50% { box-shadow: inset 0 0 44px rgba(122, 165, 196, .28), var(--shadow); } }
+.intro-art svg { width: 100%; height: 100%; display: block; }
+/* 标题压在画幅上：标题区与画幅叠层，做出电影海报的层次 */
+.intro-art + .game-title { position: relative; }
+/* 雨丝下落：三条不同速度/斜率的雨带，避免机械感 */
+.intro-rain-a { animation: rain-fall 1.1s linear infinite; }
+.intro-rain-b { animation: rain-fall 1.6s linear infinite; }
+.intro-rain-c { animation: rain-fall .8s linear infinite; }
+@keyframes rain-fall { from { transform: translateY(-12%); } to { transform: translateY(112%); } }
+/* 门内暖光呼吸——整场唯一「暖」的来源，与雨夜的冷对峙 */
+.intro-glow { animation: breathe 5s ease-in-out infinite; }
+@keyframes breathe { 50% { opacity: .55; } }
+/* 被划破画框的冷光一闪，暗示「画是被毁掉的那一幅」 */
+.intro-slash { animation: slash-flash 7s ease-in-out infinite; }
+@keyframes slash-flash { 0%, 88%, 100% { opacity: .25; } 92% { opacity: .9; } }
+@media (prefers-reduced-motion: reduce) {
+  .intro-rain-a, .intro-rain-b, .intro-rain-c, .intro-glow, .intro-slash { animation: none !important; }
+}
 
 .game-title {
   font-family: var(--serif); font-size: clamp(40px, 8vw, 64px);
@@ -512,7 +538,8 @@ button { font-family: var(--sans); }
   width: 54px; height: 54px; border-radius: 12px; overflow: hidden;
   border: 1px solid var(--line); background: #0a0e14; flex: none;
   display: flex; align-items: center; justify-content: center;
-  transition: all .25s ease;
+  /* 只过渡实际变化的描边/辉光；动画走 scale/rotate，不应被 transition 监听 */
+  transition: border-color .25s ease, box-shadow .25s ease;
 }
 .dialog-head .avatar svg { width: 100%; height: 100%; display: block; }
 
@@ -521,16 +548,40 @@ button { font-family: var(--sans); }
   border-color: var(--amber) !important;
   box-shadow: 0 0 12px rgba(224, 169, 78, .35);
 }
+/* v3.7 · 第四态 defensive（压力≥2 且敌意高）：用青色冷光与 shaken 的金色区分，
+ * 一眼看出"咬牙硬撑"与"已经动摇"是两种状态 */
+.avatar.mood-defensive {
+  border-color: var(--status-enmity) !important;
+  box-shadow: 0 0 12px rgba(249, 115, 22, .35);
+}
 .avatar.mood-broken {
   border-color: var(--danger) !important;
   box-shadow: 0 0 16px rgba(196, 87, 78, .5);
+}
+/* 崩溃态缓慢摇头（2.5° 微幅，幅度过大像 bug）。
+ * 用 rotate 独立属性而非 transform——头像同时带 tension-heartbeat
+ * （scale 心跳），两个动画都写 transform 会互相覆盖（CodeRabbit 抓到），
+ * 独立属性让两者并行不冲突。 */
+.avatar-dialog.mood-broken {
+  /* 本规则比 .tension-heartbeat 高一级，animation 简写会整条覆盖心跳；
+   * 崩溃态的头像一定同时带 tension-heartbeat（见 game.js 头像类名拼装），
+   * 因此把两个动画合并到同一条声明里，rotate/scale 各管各的互不冲突。 */
+  animation: headShake 4s ease-in-out infinite, tensionPulse 1.2s infinite ease-in-out;
+}
+@keyframes headShake {
+  0%, 100% { rotate: 0deg; }
+  25% { rotate: -2.5deg; }
+  75% { rotate: 2.5deg; }
 }
 .tension-heartbeat {
   animation: tensionPulse 1.2s infinite ease-in-out;
 }
 @keyframes tensionPulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.06); }
+  0%, 100% { scale: 1; }
+  50% { scale: 1.06; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .avatar-dialog.mood-broken, .tension-heartbeat { animation: none !important; }
 }
 .dialog-head .who { flex: 1; }
 .dialog-head .who .nm { font-weight: 600; font-size: 17px; }
@@ -559,6 +610,39 @@ button { font-family: var(--sans); }
   content: '▍'; color: var(--amber); animation: streamBlink .8s steps(1) infinite;
 }
 @keyframes streamBlink { 50% { opacity: 0; } }
+
+/* v3.7 · 证据对峙条：常驻窄栏，把「想出示就点」变成零成本动作 */
+.evidence-bar {
+  display: flex; flex-wrap: wrap; gap: 5px; align-items: center;
+  padding: 7px 14px; border-top: 1px dashed var(--line);
+}
+.evidence-bar.hidden { display: none; }
+.ev-bar-label { font-size: 11px; color: var(--ink-dim); margin-right: 2px; }
+.ev-bar-lock { font-size: 11.5px; color: #c4937a; }
+.ev-chip {
+  width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 15px; background: var(--bg-soft); border: 1px solid var(--line);
+  border-radius: 7px; cursor: pointer; transition: all .15s; padding: 0;
+}
+.ev-chip:hover { border-color: var(--amber); background: var(--amber-soft); transform: translateY(-1px); }
+.ev-chip.shown { opacity: .45; }   /* 已出示过的压暗，避免误以为还能再戳一次 */
+.ev-chip.shown::after {
+  content: '✓'; position: absolute; font-size: 10px; color: var(--green);
+}
+.ev-chip { position: relative; }
+
+/* v3.7 · 流式输出时头像加「思考中」外圈光环 */
+.avatar-dialog.streaming {
+  border-color: var(--amber) !important;
+  animation: thinkHalo 1.4s ease-in-out infinite;
+}
+@keyframes thinkHalo {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(224,169,78,.45); }
+  50% { box-shadow: 0 0 0 5px rgba(224,169,78,0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .avatar-dialog.streaming { animation: none !important; }
+}
 .bubble.system {
   align-self: center; font-size: 12px; color: var(--ink-dim);
   background: transparent; border: 1px dashed var(--line); border-radius: 8px; padding: 4px 12px;
@@ -635,20 +719,169 @@ button { font-family: var(--sans); }
   white-space: pre-wrap; box-shadow: var(--shadow); min-height: 120px;
 }
 .score-box { max-width: 720px; margin: 18px auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 24px; }
-.score-rank { text-align: center; font-family: var(--serif); font-size: 30px; color: var(--amber); letter-spacing: .15em; margin-bottom: 4px; }
+/* 徽章与说明整行居中：inline-block 元素需要外层 text-align */
+.score-box { text-align: center; }
+.score-box .score-row, .score-box .score-total { text-align: left; }
+/* v3.7 · 评级徽章做成「红章」：方形红章压在评分卡顶，
+ * 呼应结案档案的实物隐喻（红章一盖，案子才算结） */
+.score-rank {
+  display: inline-block; text-align: center; font-family: var(--serif);
+  font-size: 26px; font-weight: 700; color: #f4dcc4; letter-spacing: .2em; text-indent: .2em;
+  margin: 0 auto 6px; padding: 8px 20px; border: 2px solid #c4574e; border-radius: 6px;
+  background: linear-gradient(150deg, rgba(196,87,78,.28), rgba(196,87,78,.12));
+  box-shadow: inset 0 0 12px rgba(196,87,78,.25), 0 2px 10px rgba(0,0,0,.35);
+  transform: rotate(-1.5deg);
+  animation: stampIn .45s cubic-bezier(.2, 1.4, .4, 1) both;
+}
+/* 徽章整行居中。
+ * 注意不能给 #score-rank-badge 写 display——renderScore 靠 hidden 属性
+ * 先藏住徽章、等总分滚完再亮出「最后盖章」的节奏；ID 选择器的
+ * display:inline-block 会覆盖 UA 的 [hidden]{display:none}（CodeRabbit 抓到）。
+ * 居中交给父级 text-align，显隐只交给 hidden 属性。 */
+.score-box > #score-rank-badge, .score-box > #score-rank-desc { text-align: center; }
+@keyframes stampIn {
+  0% { opacity: 0; transform: scale(2.2) rotate(-14deg); }
+  60% { opacity: 1; transform: scale(.92) rotate(-1.5deg); }
+  100% { transform: scale(1) rotate(-1.5deg); }
+}
 .score-rank-desc { text-align: center; color: var(--ink-dim); font-size: 13px; margin-bottom: 14px; }
-.score-row { display: flex; justify-content: space-between; padding: 7px 2px; border-bottom: 1px dashed var(--line); font-size: 14px; }
-.score-row:last-of-type { border-bottom: none; }
-.score-row b { color: var(--amber); }
-.score-total { display: flex; justify-content: space-between; padding-top: 12px; font-size: 17px; font-weight: 700; }
-.score-total b { color: var(--amber); font-size: 22px; }
+@media (prefers-reduced-motion: reduce) {
+  .score-rank { animation: none !important; }
+}
 
-.truth-box { max-width: 760px; margin: 22px auto 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px 26px; }
-.truth-box h3 { font-family: var(--serif); color: var(--amber); letter-spacing: .12em; margin-bottom: 14px; font-size: 17px; }
-.timeline-item { display: flex; gap: 12px; padding: 7px 0; border-bottom: 1px dashed rgba(42, 54, 70, .6); font-size: 14px; }
-.timeline-item:last-child { border-bottom: none; }
-.timeline-item time { flex: none; color: var(--amber); font-weight: 700; font-family: var(--mono); width: 96px; }
-#reveal { margin-top: 16px; font-family: var(--serif); font-size: 15px; white-space: pre-wrap; }
+/* v3.7 · 动感计分：单行先暗显，动画开始时才点亮（[data-ready=1]） */
+.score-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 7px 2px; border-bottom: 1px dashed var(--line); font-size: 14px; opacity: .38; transition: opacity .25s, transform .25s; }
+.score-row:last-of-type { border-bottom: none; }
+.score-row[data-ready="1"] { opacity: 1; transform: translateX(2px); }
+.score-row > span { flex: 1 1 auto; min-width: 0; }
+.score-row b { color: var(--amber); font-variant-numeric: tabular-nums; min-width: 3.5em; text-align: right; }
+/* 每行下面的进度条：算分可视化，空手而归的 0 分一眼看得出来 */
+.score-bar { display: block; flex: 1 1 100%; height: 3px; margin-top: 4px; background: rgba(255,255,255,.06); border-radius: 2px; overflow: hidden; }
+.score-bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--amber-soft), var(--amber)); transition: width .3s linear; }
+.score-total { display: flex; justify-content: space-between; align-items: baseline; padding-top: 12px; font-size: 17px; font-weight: 700; border-top: 1px solid var(--line); margin-top: 6px; }
+.score-total b { color: var(--amber); font-size: 26px; font-variant-numeric: tabular-nums; }
+
+/* v3.7 · 能力评估 CTA：与评分卡明显区隔，避免读成同一块内容 */
+.cta-card { text-align: center; padding: 26px 20px 22px; border: 1px dashed var(--amber); border-radius: 12px; background: rgba(234,179,8,.05); }
+.cta-title { font-family: var(--serif); font-size: 21px; color: var(--amber); letter-spacing: .1em; margin-bottom: 10px; }
+.cta-desc { max-width: 560px; margin: 0 auto 18px; font-size: 13.5px; line-height: 1.8; color: var(--ink-dim); }
+.cta-desc .dim { opacity: .7; }
+
+/* v3.7.2 · 终幕页头与卷宗式时间线 */
+.final-head { max-width: 760px; margin: 0 auto 4px; text-align: center; }
+.final-kicker { font-family: var(--mono); font-size: 10.5px; letter-spacing: .28em; color: var(--ink-dim); opacity: .7; margin-bottom: 6px; }
+.final-head .section-title { margin-bottom: 10px; }
+.final-rule { width: 64px; height: 1px; margin: 0 auto 4px; background: linear-gradient(90deg, transparent, var(--amber), transparent); opacity: .65; }
+
+/* 合议庭进行中：分步状态 + 不定进度 + 计时，避免玩家面对空白卡片 */
+.jury-pending { white-space: normal; text-align: center; padding: 12px 0 6px; }
+.jury-seal {
+  width: 54px; height: 54px; margin: 0 auto 12px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 24px; color: var(--amber);
+  border: 1px solid rgba(224, 169, 78, .4);
+  background: radial-gradient(circle at 50% 35%, rgba(224, 169, 78, .16), rgba(10, 14, 20, .2));
+  animation: sealPulse 2.2s ease-in-out infinite;
+}
+@keyframes sealPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(224, 169, 78, .18); }
+  50% { box-shadow: 0 0 0 10px rgba(224, 169, 78, 0); }
+}
+.jury-pending-title { font-family: var(--serif); font-size: 17px; letter-spacing: .14em; color: var(--amber); margin-bottom: 12px; }
+.jury-steps { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.jury-step {
+  font-size: 11.5px; color: var(--ink-dim); border: 1px solid var(--line);
+  border-radius: 999px; padding: 4px 11px; transition: color .3s, border-color .3s, background .3s;
+}
+.jury-step.active { color: var(--amber); border-color: rgba(224, 169, 78, .5); background: rgba(224, 169, 78, .1); }
+.jury-step.done { color: var(--green); border-color: rgba(168, 196, 154, .4); }
+.jury-step.done::before { content: '✓ '; }
+.jury-progress {
+  height: 3px; max-width: 420px; margin: 0 auto 10px;
+  background: rgba(255, 255, 255, .07); border-radius: 2px; overflow: hidden;
+}
+.jury-progress > i {
+  display: block; height: 100%; width: 38%; border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--amber), transparent);
+  animation: jurySweep 1.5s ease-in-out infinite;
+}
+@keyframes jurySweep { 0% { transform: translateX(-120%); } 100% { transform: translateX(320%); } }
+.jury-elapsed { font-size: 11.5px; color: var(--ink-dim); font-family: var(--mono); letter-spacing: .04em; }
+.jury-elapsed b { color: var(--amber); font-weight: 600; }
+@media (prefers-reduced-motion: reduce) {
+  .jury-seal, .jury-progress > i { animation: none !important; }
+}
+
+.score-head {
+  text-align: left; font-family: var(--mono); font-size: 10.5px;
+  letter-spacing: .24em; color: var(--ink-dim); margin-bottom: 12px; opacity: .75;
+}
+
+.truth-box {
+  position: relative; max-width: 760px; margin: 22px auto 0;
+  background: linear-gradient(165deg, rgba(24, 32, 44, .92), rgba(14, 19, 27, .96));
+  border: 1px solid var(--line); border-radius: 14px; padding: 22px 26px;
+  box-shadow: var(--shadow); overflow: hidden;
+}
+.truth-box::before {
+  content: 'CASE FILE'; position: absolute; top: 14px; right: 18px;
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .26em;
+  color: rgba(224, 169, 78, .28);
+}
+.file-head { margin-bottom: 16px; }
+.file-tag {
+  display: inline-block; font-size: 10px; letter-spacing: .18em; color: var(--amber);
+  border: 1px solid rgba(224, 169, 78, .35); border-radius: 999px;
+  padding: 2px 9px; margin-bottom: 7px;
+}
+.file-head h3 {
+  font-family: var(--serif); color: var(--amber); letter-spacing: .12em;
+  margin: 0 0 4px; font-size: 18px;
+}
+.file-head p { margin: 0; font-size: 11.5px; color: var(--ink-dim); }
+.timeline { position: relative; margin-top: 6px; }
+.tl-node {
+  display: grid; grid-template-columns: 92px 18px 1fr; gap: 10px;
+  position: relative; padding-bottom: 13px;
+  opacity: 0; transform: translateY(7px);
+  animation: tlIn .45s ease forwards;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+.tl-node:last-child { padding-bottom: 0; }
+.tl-time {
+  font-family: var(--mono); font-size: 12.5px; color: var(--amber);
+  font-weight: 700; text-align: right; padding-top: 7px;
+}
+.tl-rail { position: relative; display: flex; justify-content: center; }
+.tl-rail::before {
+  content: ''; position: absolute; top: 8px; bottom: -13px; width: 1px;
+  background: linear-gradient(180deg, rgba(224, 169, 78, .45), rgba(42, 54, 70, .5));
+}
+.tl-node:last-child .tl-rail::before { display: none; }
+.tl-dot {
+  width: 9px; height: 9px; margin-top: 8px; border-radius: 50%;
+  background: var(--amber); box-shadow: 0 0 0 3px rgba(224, 169, 78, .14); z-index: 1;
+}
+.tl-card {
+  background: rgba(10, 14, 20, .4); border: 1px solid var(--line);
+  border-radius: 9px; padding: 8px 12px;
+}
+.tl-card p { margin: 0; font-size: 13.5px; line-height: 1.65; color: var(--ink); }
+@keyframes tlIn { to { opacity: 1; transform: none; } }
+
+.reveal {
+  margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line);
+  font-family: var(--serif); font-size: 14.5px; line-height: 1.95;
+}
+.reveal-label {
+  display: inline-block; font-family: var(--sans); font-size: 10.5px;
+  letter-spacing: .18em; color: var(--amber); margin-bottom: 9px;
+}
+.reveal p { margin: 0 0 10px; color: var(--ink-dim); }
+.reveal p.lead { color: var(--ink); font-size: 16px; line-height: 1.9; }
+.reveal p:last-child { margin-bottom: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .tl-node { animation: none !important; opacity: 1; transform: none; }
+}
 
 .game-footer { text-align: center; color: var(--ink-dim); font-size: 11.5px; margin-top: 34px; line-height: 2; }
 .game-footer a { color: var(--blue); text-decoration: none; }
@@ -724,6 +957,71 @@ button { font-family: var(--sans); }
 .settings-body { font-size: 14px; }
 .settings-note { color: var(--ink-dim); font-size: 13px; margin-bottom: 14px; line-height: 1.8; }
 .settings-note.dim { margin-top: 12px; text-align: center; }
+
+/* ---------- 设置页：分层收纳（接口来源 / 安全存储 / 连接配置） ---------- */
+.settings-intro {
+  font-size: 12.5px; line-height: 1.7; color: var(--ink-dim);
+  margin: -2px 0 14px; padding: 10px 13px;
+  background: rgba(224, 169, 78, .06); border: 1px solid rgba(224, 169, 78, .22);
+  border-radius: 9px;
+}
+.settings-intro strong { color: var(--amber); }
+.settings-section { margin-top: 18px; }
+.settings-section + .settings-section {
+  border-top: 1px solid var(--line); padding-top: 16px;
+}
+.settings-section-head {
+  display: flex; align-items: flex-start; gap: 10px; margin-bottom: 8px;
+}
+.ss-index {
+  flex: none; width: 27px; height: 27px; border-radius: 8px;
+  display: grid; place-items: center;
+  font-family: var(--mono); font-size: 10.5px; color: var(--amber);
+  border: 1px solid rgba(224, 169, 78, .4); background: rgba(224, 169, 78, .08);
+}
+.settings-section-head h4 {
+  margin: 0; font-size: 14px; color: var(--ink); letter-spacing: .06em; line-height: 1.3;
+}
+.settings-section-head p {
+  margin: 2px 0 0; font-size: 11.5px; color: var(--ink-dim); line-height: 1.5;
+}
+.settings-section .field-group { margin-top: 4px; }
+.settings-fold {
+  margin-top: 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: rgba(10, 14, 20, .32); overflow: hidden;
+}
+.settings-fold > summary {
+  cursor: pointer; padding: 10px 13px; font-size: 12.5px; color: var(--ink-dim);
+  list-style: none; display: flex; align-items: center; gap: 7px;
+  user-select: none; transition: color .15s, background .15s;
+}
+.settings-fold > summary::-webkit-details-marker { display: none; }
+.settings-fold > summary::before {
+  content: '▸'; flex: none; color: var(--amber); transition: transform .18s ease;
+}
+.settings-fold[open] > summary::before { transform: rotate(90deg); }
+.settings-fold > summary:hover { color: var(--ink); background: rgba(255, 255, 255, .025); }
+.settings-fold-body { padding: 2px 13px 12px; border-top: 1px solid rgba(42, 54, 70, .55); }
+.settings-fold .field-label:first-child { margin-top: 10px; }
+.settings-fold-body .security-card {
+  border: none; background: transparent; box-shadow: none; padding: 2px 0 0; margin: 0;
+}
+.settings-fold-body .storage-mode-row { margin-bottom: 4px; }
+.source-card { transition: border-color .2s, background .2s, box-shadow .2s; }
+.source-card:has(input:checked) {
+  border-color: var(--amber); background: var(--amber-soft);
+  box-shadow: 0 0 0 1px rgba(224, 169, 78, .18), 0 0 14px rgba(224, 169, 78, .12);
+}
+.badge-rec {
+  font-size: 10px; font-weight: 600; color: #14100a; background: var(--amber);
+  border-radius: 999px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px;
+}
+.settings-actions {
+  position: sticky; bottom: -20px; z-index: 2;
+  margin: 20px -24px 0; padding: 12px 24px;
+  background: linear-gradient(180deg, rgba(20, 26, 35, .55), var(--panel) 34%);
+  border-top: 1px solid var(--line);
+}
 
 /* 0 日志安全保障卡片 */
 .security-card {
@@ -906,6 +1204,36 @@ textarea.text-input { resize: vertical; min-height: 52px; line-height: 1.6; }
 }
 .eval-advice { border-style: solid; color: var(--ink); }
 
+/* v3.7.2 · 能力档案：卷宗抬头 + 五维数值条 + 双栏备注 + 落款 */
+.eval-kicker {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .22em;
+  color: var(--ink-dim); margin-bottom: 3px; opacity: .75;
+}
+.eval-radar { display: flex; flex-direction: column; gap: 8px; }
+.radar-label { font-size: 10.5px; letter-spacing: .14em; color: var(--ink-dim); text-align: center; }
+.dims-bars { display: flex; flex-direction: column; gap: 5px; padding: 2px 4px 4px; }
+.dim-row {
+  display: grid; grid-template-columns: 44px 1fr 24px; align-items: center;
+  gap: 6px; font-size: 10.5px; color: var(--ink-dim);
+}
+.dim-row > i { display: block; height: 4px; background: rgba(255, 255, 255, .07); border-radius: 2px; overflow: hidden; }
+.dim-row > i > b {
+  display: block; height: 100%; border-radius: 2px;
+  background: linear-gradient(90deg, var(--amber-soft), var(--amber));
+}
+.dim-row > em { font-style: normal; font-family: var(--mono); color: var(--amber); text-align: right; }
+.eval-notes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.eval-strength .es-name { display: flex; align-items: center; gap: 6px; }
+.es-no {
+  font-family: var(--mono); font-size: 9.5px; color: var(--ink-dim);
+  border: 1px solid var(--line); border-radius: 4px; padding: 0 4px;
+}
+.eval-foot {
+  margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line);
+  font-size: 10.5px; color: var(--ink-dim); text-align: center;
+  letter-spacing: .06em; opacity: .8;
+}
+
 /* ---------- v3.0 · 三维关系数值条（压力/信任/敌意） ---------- */
 .rel-bars { display: flex; flex-direction: column; gap: 3px; margin-top: 5px; }
 .rel-row { display: flex; align-items: center; gap: 6px; }
@@ -992,13 +1320,31 @@ textarea.text-input { resize: vertical; min-height: 52px; line-height: 1.6; }
 }
 .suggest-chip:hover { color: var(--amber); border-color: var(--amber); background: var(--amber-soft); }
 
+/* ---------- v3.7 · 求助入口与旁白气泡 ---------- */
+/* 求助只给方向不给问句，所以按钮要显眼（鼓励用）但说明要常驻（提示代价） */
+.hint-btn {
+  background: var(--bg-soft); border: 1px solid var(--line); border-radius: 999px;
+  color: var(--amber); font-size: 11.5px; padding: 4px 13px; cursor: pointer;
+  transition: all .15s; font-family: var(--sans); display: inline-flex; align-items: center; gap: 4px;
+}
+.hint-btn:hover { background: var(--amber-soft); border-color: var(--amber); }
+.hint-btn:disabled { opacity: .5; cursor: not-allowed; }
+/* 旁白气泡：虚线边 + 略偏冷的底色，一眼区别于嫌疑人（实线/暖）与系统（无边框） */
+.bubble.hint {
+  border: 1px dashed var(--line); background: var(--bg-soft);
+  font-size: 12.5px; line-height: 1.65; color: var(--ink-dim);
+}
+.hint-tag { color: var(--amber); font-size: 10.5px; margin-right: 6px; }
+.hint-fallback { font-size: 10px; opacity: .6; margin-left: 4px; }
+/* 求助惩罚行：终幕里用暗红标出，让玩家知道分扣在哪 */
+.score-row-penalty b, .score-row-penalty span:last-child { color: #c4937a; }
+
 /* ---------- v3.0 · 免费通道状态与自定义 Key 区 ---------- */
 .free-status { display: block; font-size: 11.5px; margin-top: 3px; }
 .free-status.ok { color: var(--green); }
 .free-status.err { color: #c4937a; }
-#custom-key-block.dim { opacity: .45; }
-#custom-key-block.dim .text-input,
-#custom-key-block.dim .radio-card { pointer-events: none; }
+/* 免费模式下整块隐藏，而不是半透明铺在页面上——层级更干净 */
+#custom-key-block.dim { display: none; }
 
 /* ---------- v3.0 · 关系尾声 + NPC 决策日志 ---------- */
 .epilogue-box {
@@ -1059,9 +1405,13 @@ textarea.text-input { resize: vertical; min-height: 52px; line-height: 1.6; }
   .suspect-card { flex: 0 0 auto; min-width: 148px; padding: 8px 10px; }
   .suspect-card .avatar { width: 36px; height: 36px; }
   .suspect-card .rel-bars { display: none; } /* 当前嫌疑人三维数值已在审讯头部横向展示 */
-  .timeline-item time { width: 78px; font-size: 12.5px; }
+  .tl-node { grid-template-columns: 64px 16px 1fr; gap: 8px; }
+  .tl-time { font-size: 11.5px; }
   .eval-grid { grid-template-columns: 1fr; }
-  .eval-radar { max-width: 300px; margin: 0 auto; }
+  .eval-radar { max-width: 300px; margin: 0 auto; width: 100%; }
+  .eval-notes { grid-template-columns: 1fr; }
+  .truth-box { padding: 18px 16px; }
+  .truth-box::before { top: 12px; right: 12px; font-size: 8.5px; }
   .guide-hand { font-size: 26px; }
 }
 @media (max-width: 520px) {
@@ -1079,6 +1429,7 @@ textarea.text-input { resize: vertical; min-height: 52px; line-height: 1.6; }
 
   /* 移动端设置弹窗与安全卡片适配 */
   .modal-card, .modal-card-lg { padding: 16px 14px; border-radius: 12px; }
+  .settings-actions { margin-left: -14px; margin-right: -14px; padding-left: 14px; padding-right: 14px; bottom: -16px; }
   .sec-grid { grid-template-columns: 1fr; gap: 8px; }
   .sec-item span { font-size: 11.5px; word-break: break-word; }
   .intro-ai-card { flex-direction: column; align-items: stretch; gap: 10px; }

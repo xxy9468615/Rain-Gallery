@@ -18,7 +18,7 @@
  * 供自动化端到端测试在无 Key 环境驱动 NPC 行动分支。
  * ============================================================ */
 
-import { storage } from './storage.js?v=3.5.0';
+import { storage } from './storage.js?v=3.6.0';
 
 /**
  * 自定义端点（v3.5）
@@ -45,9 +45,80 @@ export const ENDPOINT_PRESETS = [
   { id: 'custom', label: '自定义端点…', url: '' },
 ];
 
-const PROXY_CHAT_URL = '/api/chat';
-const PROXY_JUDGE_URL = '/api/judge';
-const PROXY_STATUS_URL = '/api/status';
+/**
+ * 免费通道代理基址（v3.6）
+ * ------------------------------------------------------------
+ * 默认同源（/api/*），适合后端与前端同域部署（如魔搭创空间）。
+ * 静态托管（如 GitHub Pages）时填独立后端的完整地址即可跨域访问，
+ * 服务端需开启 CORS（app.py 已支持，通过 CORS_ALLOWED_ORIGINS 白名单约束）。
+ * 留空则回退同源相对路径。
+ */
+const LS_PROXY_BASE = 'rain-gallery-proxy-base';
+
+export function getProxyBase() {
+  const v = (storage.getItem(LS_PROXY_BASE) || '').trim().replace(/\/+$/, '');
+  return v;
+}
+
+/** 归一化为可直接拼接 /api/* 的根址（origin）。非法输入返回 ''（同源回退）。 */
+export function normalizeProxyBase(url) {
+  const check = validateProxyBase(url);
+  return check.ok ? (check.origin || '') : '';
+}
+
+export function setProxyBase(url) {
+  const clean = normalizeProxyBase(url);
+  if (!clean) { storage.removeItem(LS_PROXY_BASE); return ''; }
+  storage.setItem(LS_PROXY_BASE, clean);
+  return clean;
+}
+
+/**
+ * 校验代理基址：绝对 URL + http(s) + 不含凭据 + 纯根址
+ * ------------------------------------------------------------
+ * 只接受「根地址」——即 scheme://host[:port]，不得带：
+ *   - 路径        （https://host/api  →  /api/chat 会被拼成 /api/api/chat）
+ *   - 查询参数    （https://host?x=1  →  /api/chat 落进 ? 后面）
+ *   - 片段        （https://host#x    →  浏览器根本不会把它发出去）
+ *   - userinfo    （https://u:p@host → 可能被 SDK / 代理当作凭据使用）
+ * 合法时返回归一化后的 origin 供落盘，拼接 proxyUrl(path) 才不会出意外。
+ */
+export function validateProxyBase(url) {
+  const raw = String(url || '').trim().replace(/\/+$/, '');
+  if (!raw) return { ok: true, message: '同源（默认）' };
+  let u;
+  try { u = new URL(raw); } catch (e) {
+    return { ok: false, message: '不是合法的 URL' };
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') {
+    return { ok: false, message: `不支持的协议：${u.protocol}` };
+  }
+  if (u.username || u.password) {
+    return { ok: false, message: 'URL 中不能包含账号密码' };
+  }
+  if (u.search) {
+    return { ok: false, message: '只填基址（如 https://host），不要带查询参数' };
+  }
+  if (u.hash) {
+    return { ok: false, message: '只填基址（如 https://host），不要带片段（#…）' };
+  }
+  if (u.pathname && u.pathname !== '/') {
+    return { ok: false, message: '只填基址（如 https://host），不要带路径' };
+  }
+  return { ok: true, message: 'ok', origin: u.origin };
+}
+
+const proxyUrl = (path) => {
+  const base = getProxyBase();
+  return base ? `${base}${path}` : path;
+};
+
+const PROXY_CHAT_PATH = '/api/chat';
+const PROXY_JUDGE_PATH = '/api/judge';
+const PROXY_STATUS_PATH = '/api/status';
+
+/** /api/status 探测超时：探测失败不得卡住 boot() 之后的初始化 */
+const PROBE_TIMEOUT_MS = 8000;
 
 /** 当前自定义端点（带容错读取与归一化） */
 export function getEndpointUrl() {
@@ -112,12 +183,20 @@ export function validateEndpointUrl(url) {
 export const MOCK_AI = typeof location !== 'undefined'
   && new URLSearchParams(location.search).has('mockai');
 
+/**
+ * 可选手搓模型（仅「自定义 Key」模式可选）。
+ * ------------------------------------------------------------
+ * 2026-11 实测选型：免费通道上游 generalcompute.com 提供的 3 个模型，
+ * 用真实 SUSPECT_PLAY prompt 各跑 4 轮压力场景：
+ *   gemma-4-31B-it      JSON 4/4 · 阶段自洽 3/4 · 均值 2.5s  ← 默认
+ *   gpt-oss-120b        JSON 1/4 · 均值 4.2s（出现过 13s）  ← 备用
+ *   minimax-m3.1-flash  无 JSON 输出
+ * 所以默认只列 gemma，备用列 gpt-oss-120b；其余一概下架，
+ * 玩家也可在「自定义模型 ID…」手填任意 ID（存什么读什么）。
+ */
 export const MODEL_OPTIONS = [
-  { id: 'Qwen/Qwen3.8-Flash-Next', label: 'Qwen3.8-Flash-Next（推荐·极速免费）' },
-  { id: 'Qwen/Qwen3.5-27B', label: 'Qwen3.5-27B（高精度推理）' },
-  { id: 'deepseek-ai/DeepSeek-V4.1-Flash-1017', label: 'DeepSeek-V4.1-Flash' },
-  { id: 'ZhipuAI/GLM-4.7-Flash', label: 'GLM-4.7-Flash' },
-  { id: 'MiniMax/MiniMax-M1-80k', label: 'MiniMax-M1-80k' },
+  { id: 'gemma-4-31B-it', label: 'gemma-4-31B-it（默认 · 免费通道在用）' },
+  { id: 'gpt-oss-120b', label: 'gpt-oss-120b（备用 · 默认端点抖动时切换）' },
 ];
 
 export const STORAGE_MODE = {
@@ -345,13 +424,19 @@ export const aiSettings = {
     storage.removeItem('rain-gallery-token');
   },
 
+  /**
+   * 读取当前模型 ID。语义：存什么读什么。
+   * 白名单 MODEL_OPTIONS 只决定「首次进入的默认值」，不作为过滤条件——
+   * 过去这里要求 memoryModel / saved 必须在白名单内或以 'custom:' 开头，
+   * 导致玩家在设置里手填的模型 ID（如 glm-4-plus）每次都被静默重置回默认值：
+   * 玩家以为换了模型，实际请求一直在打默认模型。
+   * obsolete 列表仍生效（已从上游下线的旧 ID 重置为默认）。
+   */
   getModel() {
-    if (memoryModel && (MODEL_OPTIONS.some(m => m.id === memoryModel) || memoryModel.startsWith('custom:'))) {
-      return memoryModel;
-    }
+    if (memoryModel) return memoryModel;
     const saved = storage.getItem(LS_MODEL);
     const obsolete = ['Qwen/Qwen3-8b', 'Qwen/Qwen2.5-7B-Instruct', 'deepseek-ai/DeepSeek-V3.1', 'ZhipuAI/GLM-4-9B-0414-Flash'];
-    if (!saved || obsolete.includes(saved) || (!MODEL_OPTIONS.some(m => m.id === saved) && !saved.startsWith('custom:'))) {
+    if (!saved || obsolete.includes(saved)) {
       storage.setItem(LS_MODEL, MODEL_OPTIONS[0].id);
       return MODEL_OPTIONS[0].id;
     }
@@ -359,8 +444,10 @@ export const aiSettings = {
   },
 
   setModel(m) {
-    memoryModel = m || '';
-    storage.setItem(LS_MODEL, m);
+    const clean = String(m || '').trim();
+    memoryModel = clean;
+    storage.setItem(LS_MODEL, clean);
+    return clean;
   },
 
   hasToken() {
@@ -406,10 +493,21 @@ export function getSessionId() {
 
 export function rotateSessionId() {
   storage.removeItem(LS_SESSION_ID);
+  // 换新会话的同时把本局计数归零：否则「本局剩余 N 次」会沿用上一局的消耗，
+  // 玩家看到的是一个对不上的数字（后端已按新会话重新计额，前端却还在扣旧的）。
+  proxyState.sessionUsed = 0;
   return getSessionId();
 }
 
-/** 探测同源免费通道（file:// / 纯静态托管下不可用，自动置灰） */
+/**
+ * 探测免费通道（file:// / 纯静态托管 / 后端不可达时置灰）
+ * ------------------------------------------------------------
+ * 必须带超时：boot() 的顺序是「await 探测 → bindEvents()/initSettings()」，
+ * 若填了独立后端基址而该后端把 /api/status 挂住不返回，页面会一直停在探测前——
+ * 玩家连设置面板都打不开，也就没机会改回基址。因此 fetch 与 resp.json 都套
+ * AbortController 超时，超时后走下面既有的失败分支（available=false），
+ * 启动流程继续执行。
+ */
 export async function probeProxy() {
   if (MOCK_AI) { // mock 模式视同免费通道可用，便于全链路测试
     proxyState.available = true;
@@ -417,8 +515,13 @@ export async function probeProxy() {
     proxyState.checked = true;
     return { ...proxyState };
   }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
   try {
-    const resp = await fetch(PROXY_STATUS_URL, { headers: { 'X-Session-Id': getSessionId() } });
+    const resp = await fetch(proxyUrl(PROXY_STATUS_PATH), {
+      headers: { 'X-Session-Id': getSessionId() },
+      signal: controller.signal,
+    });
     if (!resp.ok) throw new Error(String(resp.status));
     const data = await resp.json();
     proxyState.available = !!data.available;
@@ -426,9 +529,12 @@ export async function probeProxy() {
     proxyState.sessionCap = data.sessionCap || 150;
     proxyState.sessionUsed = data.sessionUsed || 0;
   } catch (e) {
+    // AbortError（超时）与网络错误同等对待：置灰，交由 requireAI 引导玩家去设置
     proxyState.available = false;
+  } finally {
+    clearTimeout(timer);
+    proxyState.checked = true;
   }
-  proxyState.checked = true;
   return { ...proxyState };
 }
 
@@ -461,17 +567,98 @@ export function lastTransport() { return { ..._lastTransport }; }
 // ------------------------------------------------------------
 // 4. 网络出站单向沙箱守卫与调用
 // ------------------------------------------------------------
-/** 剥离推理模型返回的 <think>...</think> 段落 */
+/**
+ * 剥离推理模型返回的思维链段落。玩家看到的是「台词」，不是模型的内心独白。
+ * 覆盖四种形态，任一漏掉都会把推理原文怼到玩家脸上：
+ *   1. 闭合 <think> ... </think>：整段删除（非贪婪，遇首个闭合标签即停）
+ *   2. 未闭合 <think>：模型被 max_tokens 截断时只剩开标签，其后全是残留，切到结尾
+ *   3. <|begin_of_thought|> ... <|end_of_thought|>：整段删除（早期实现只删标记不删内容）
+ *   4. 落单的起止标记：兜底把标记字符本身删掉
+ */
 export function stripThinking(text) {
-  return String(text || '')
+  const raw = String(text || '');
+  if (!raw) return '';
+  return raw
     .replace(/<think>[\s\S]*?<\/think>/gi, '')
-    .replace(/<\|?(?:begin|end)_of_thought\|?>/gi, '')
+    .replace(/<think>[\s\S]*$/gi, '')
+    .replace(/<\|begin_of_thought\|>[\s\S]*?(?:<\|end_of_thought\|>|$)/gi, '')
+    .replace(/<\|?(?:begin|end)_of_thought\|>/gi, '')
     .trim();
 }
 
 /** 魔搭访问令牌格式校验（ms- 前缀，主体 ≥12 位） */
 export function validateTokenFormat(token) {
   return /^ms-[A-Za-z0-9_-]{12,}$/.test(String(token || '').trim());
+}
+
+/**
+ * 流式思维链剥离器（有状态，跨 chunk）。
+ * ------------------------------------------------------------
+ * 正确做法必须基于**累积原文**：标记和正文会被拆进不同的 SSE chunk，
+ * 逐 chunk 调 stripThinking 会四连漏（实测被 CodeRabbit 抓到）：
+ *   1. 首个 chunk 只有开标签 → 被"未闭合"规则整段吃掉，正文永不出现
+ *   2. 后续纯思维链 chunk 不含任何标签 → 原样漏给玩家
+ *   3. 单独到达的闭标签不匹配任何规则 → 作为字面文本漏出
+ *   4. 逐 chunk 的 .trim() 会吃掉英文单词间的空格（" world"→"world"）
+ *
+ * 策略：累积原始文本 → 对累积串整体 stripThinking → 与上次已确认输出
+ * 的干净长度做前缀差分 → 只把新增部分发给 onDelta。
+ * 末尾若有未闭合的 `<…` 暂扣不发（标签可能被拆在 chunk 边界），
+ * 等下一 chunk 到齐或流结束时再放行。
+ *
+ * 关于 O(n²)（CodeRabbit 提过）：曾改成"只扫未确认尾部"的增量版，实测**不可行**——
+ * 原文必须完整保留：上一轮暂扣的未闭合 `<` 躺在已确认区间里，一旦把已确认部分
+ * 从累积串里切掉，`lastIndexOf('<')` 就再也找不到它，随后的
+ * `stripThinking` 会按"未闭合"规则把后面的正文整段吃掉（闭标签漏出 + 幂等失效，
+ * 随机切分 112/200 组不一致）。行为用例见 proxy-base-test 11.1b。
+ * 当前 max_tokens=1200 下累积串仅几百字，实际开销可接受；将来若大幅放宽上限，
+ * 正确的做法是重写成真正的增量状态机（逐段判断标签开合），而不是切前缀。
+ */
+export function createStreamSanitizer() {
+  let raw = '';        // 累积原文（必须保留全文，见上方注释）
+  let cleanLen = 0;     // 已确认输出的干净前缀长度
+  return {
+    /** 喂入一个 chunk 的原始正文，返回本段新增的干净文本（可能为空串） */
+    push(piece) {
+      raw += piece;
+      // 末尾悬挂着未闭合的 `<`：标签可能被拆在 chunk 边界，整段暂扣
+      const hangIdx = raw.lastIndexOf('<');
+      const safeEnd = (hangIdx >= 0 && raw.indexOf('>', hangIdx) < 0) ? hangIdx : raw.length;
+      const clean = stripThinking(raw.slice(0, safeEnd));
+      // stripThinking 带 trim：干净前缀不会以空白结尾，直接按长度截新增段
+      if (clean.length <= cleanLen) return '';
+      const fresh = clean.slice(cleanLen);
+      cleanLen = clean.length;
+      return fresh;
+    },
+    /** 流结束：对完整原文做最终剥离（此前被暂扣的尾巴在此放行） */
+    flush() {
+      const clean = stripThinking(raw);
+      const fresh = clean.length > cleanLen ? clean.slice(cleanLen) : '';
+      cleanLen = clean.length;
+      raw = clean;   // 后续若还有人调用也不会重复输出
+      return fresh;
+    },
+  };
+}
+
+/**
+ * 从一条 SSE chunk 里取出本段**原始**正文（不做剥离）。
+ * ------------------------------------------------------------
+ * 剥离由调用方持有的 createStreamSanitizer() 实例做（跨 chunk 有状态）。
+ * 三种上游形态都覆盖：
+ *   - delta.content             绝大多数 OpenAI 兼容上游
+ *   - delta.message.content     合帧场景（上游把整条 message 塞进 delta）
+ */
+function sseDeltaPiece(parsed) {
+  const delta = parsed && parsed.choices && parsed.choices[0] && parsed.choices[0].delta;
+  if (!delta) return '';
+  if (typeof delta.content === 'string') return delta.content;
+  if (typeof delta.message === 'object' && delta.message
+      && typeof delta.message.content === 'string') {
+    return delta.message.content;
+  }
+  return '';
 }
 
 // ------------------------------------------------------------
@@ -501,17 +688,29 @@ function emitLoadState(patch = {}) {
   loadListeners.forEach((cb) => { try { cb({ ...loadState }); } catch (e) { /* ignore */ } });
 }
 
-function acquireGate() {
-  return new Promise((resolve) => {
+function acquireGate(signal) {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      const i = LOAD_GATE.queue.indexOf(tryAcquire);
+      if (i >= 0) {
+        LOAD_GATE.queue.splice(i, 1);
+        emitLoadState({ depth: LOAD_GATE.queue.length });
+      }
+      reject({ code: 'ABORT', message: '请求已取消' });
+    };
     const tryAcquire = () => {
+      if (signal && signal.aborted) { onAbort(); return; }
       if (LOAD_GATE.active < LOAD_GATE.MAX) {
         LOAD_GATE.active++;
+        if (signal) signal.removeEventListener('abort', onAbort);
         resolve();
       } else {
         LOAD_GATE.queue.push(tryAcquire);
         emitLoadState({ phase: 'gate', reason: 'gate', depth: LOAD_GATE.queue.length });
       }
     };
+    // 超时中止时把仍在排队的请求撤出队列，避免它之后白占一个槽位
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
     tryAcquire();
   });
 }
@@ -606,7 +805,7 @@ async function _rawProxy(messages, opts = {}) {
   };
   let resp;
   try {
-    resp = await fetch(judge ? PROXY_JUDGE_URL : PROXY_CHAT_URL, {
+    resp = await fetch(judge ? proxyUrl(PROXY_JUDGE_PATH) : proxyUrl(PROXY_CHAT_PATH), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Session-Id': getSessionId() },
       body: JSON.stringify(body),
@@ -673,7 +872,7 @@ async function chatWithRetry(messages, opts, rawFn) {
   const maxRetries = opts.noQueue ? 0 : 3;
   let lastErr = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    await acquireGate();
+    await acquireGate(opts.signal);
     let result;
     try {
       emitLoadState({ phase: 'running', attempt, waitMs: 0, reason: '' });
@@ -787,7 +986,7 @@ export async function chatCompletionStream(messages, opts = {}) {
     : (getEndpointMode() === ENDPOINT_MODE.FREE ? (proxyState.available || !hasCustom) : !hasCustom);
 
   if (preferProxy) {
-    const resp = await fetch(judge ? PROXY_JUDGE_URL : PROXY_CHAT_URL, {
+    const resp = await fetch(judge ? proxyUrl(PROXY_JUDGE_PATH) : proxyUrl(PROXY_CHAT_PATH), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Session-Id': getSessionId() },
       body: JSON.stringify({
@@ -814,6 +1013,7 @@ export async function chatCompletionStream(messages, opts = {}) {
     }
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
+    const sanitizer = createStreamSanitizer();   // 跨 chunk 剥思维链（标记会被拆进不同 chunk）
     let buffer = '';
     let full = '';
     while (true) {
@@ -829,12 +1029,14 @@ export async function chatCompletionStream(messages, opts = {}) {
         if (!dataStr || dataStr === '[DONE]') continue;
         try {
           const parsed = JSON.parse(dataStr);
-          const delta = parsed.choices && parsed.choices[0] && parsed.choices[0].delta;
-          const piece = delta && typeof delta.content === 'string' ? delta.content : '';
+          const piece = sanitizer.push(sseDeltaPiece(parsed));
           if (piece) { full += piece; opts.onDelta && opts.onDelta(piece, full); }
         } catch (e) { /* SSE keep-alive 行或非标准 chunk,忽略 */ }
       }
     }
+    // 流结束：放行此前被暂扣的尾巴（未闭合 <… 的判断到此失效，做最终整体剥离）
+    const tail = sanitizer.flush();
+    if (tail) { full += tail; opts.onDelta && opts.onDelta(tail, full); }
     if (!full) throw { code: 'EMPTY', message: '模型流式返回为空' };
     if (opts.kind !== 'judge') proxyState.sessionUsed += 1;
     return full;
@@ -865,6 +1067,7 @@ export async function chatCompletionStream(messages, opts = {}) {
   }
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
+  const sanitizer = createStreamSanitizer();   // 与 free 通道同一套跨 chunk 剥离
   let buffer = '';
   let full = '';
   while (true) {
@@ -880,12 +1083,16 @@ export async function chatCompletionStream(messages, opts = {}) {
       if (!dataStr || dataStr === '[DONE]') continue;
       try {
         const parsed = JSON.parse(dataStr);
-        const delta = parsed.choices && parsed.choices[0] && parsed.choices[0].delta;
-        const piece = delta && typeof delta.content === 'string' ? delta.content : '';
+        const piece = sanitizer.push(sseDeltaPiece(parsed));
         if (piece) { full += piece; opts.onDelta && opts.onDelta(piece, full); }
       } catch (e) { /* ignore */ }
     }
   }
+  const tail = sanitizer.flush();
+  if (tail) { full += tail; opts.onDelta && opts.onDelta(tail, full); }
+  // 与免费通道一致：正文被思维链占满 / content 为空时抛 EMPTY，
+  // 让 askSuspect 走既有非流式兜底，而不是把空串写进历史渲染空气泡
+  if (!full) throw { code: 'EMPTY', message: '模型流式返回为空' };
   return full;
 }
 
@@ -908,10 +1115,21 @@ export async function testConnection(token, model) {
   return { reply, latency };
 }
 
-/** 请求超时包装 */
+/**
+ * 请求超时包装。
+ * 超时不仅让外层 Promise 失败，还要 abort 底层 fetch 并从 LOAD_GATE 队列撤销——
+ * 否则上游挂起时槽位一直被占，两次超时就能把并发闸门堵死（CodeRabbit 抓到）。
+ * @param {(signal:AbortSignal)=>Promise<any>} promiseFactory 接收中止信号
+ */
 export function withTimeout(promiseFactory, ms = 45000) {
-  return Promise.race([
-    promiseFactory(),
-    new Promise((_, rej) => setTimeout(() => rej({ code: 'TIMEOUT', message: `请求超时（${ms / 1000}s）` }), ms)),
-  ]);
+  const controller = new AbortController();
+  let timer;
+  const timeout = new Promise((_, rej) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      rej({ code: 'TIMEOUT', message: `请求超时（${ms / 1000}s）` });
+    }, ms);
+  });
+  const run = Promise.resolve().then(() => promiseFactory(controller.signal));
+  return Promise.race([run, timeout]).finally(() => clearTimeout(timer));
 }

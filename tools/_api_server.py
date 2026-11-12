@@ -12,27 +12,47 @@ sys.path.insert(0, ROOT)
 class _Any:
     """吸收 gradio 的所有属性访问与调用，用于测试环境跳过入口页构建。"""
     def __getattr__(self, _k):
+        """任意属性访问返回新的 _Any，透传 gradio 调用链。"""
         return _Any()
 
     def __call__(self, *a, **kw):
+        """任意调用返回新的 _Any，模拟 gradio 组件构造/渲染。"""
         return _Any()
 
     def __enter__(self):
+        """上下文管理器入口：返回自身。"""
         return self
 
     def __exit__(self, *a):
+        """上下文管理器出口：吞掉异常并继续执行。"""
         return False
 
 
 sys.modules['gradio'] = _Any()
 
 # 优先用环境变量（CI / 容器），本地无 env 时回退读 .env
+#
+# 必须剥掉成对引号：.env 里写成 RG_PROXY_API_BASE="https://host/v1/chat/completions"
+# 是常见写法（dotenv 标准），若不剥离，值会带着引号进入 httpx，URL scheme 变成
+# 『https"』→ httpx 抛 UnsupportedProtocol，表现为 502 UPSTREAM_ERROR，
+# 而 URL 本身看 repr 完全正常，极难定位。precheck.mjs 早就剥了，这里补齐对齐。
+def _strip_quotes(v: str) -> str:
+    """剥掉 .env 值两侧成对的单/双引号，避免引号进入 httpx URL。"""
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'"):
+        return v[1:-1]
+    return v
+
+
 env_path = os.path.join(ROOT, '.env')
 if os.path.exists(env_path):
     for line in open(env_path, encoding='utf-8'):
-        m = line.strip().split('=', 1)
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        m = line.split('=', 1)
         if len(m) == 2 and m[0].isupper() and not os.environ.get(m[0]):
-            os.environ[m[0]] = m[1]
+            os.environ[m[0]] = _strip_quotes(m[1])
 
 import importlib  # noqa: E402
 import uvicorn  # noqa: E402
