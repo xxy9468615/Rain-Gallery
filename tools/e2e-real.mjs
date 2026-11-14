@@ -30,8 +30,8 @@ await step('徽标=免费AI(免费通道就绪)', async () => {
 await p.evaluate(() => { localStorage.clear(); });
 await p.goto(GAME, { waitUntil: 'domcontentloaded' });
 await p.waitForTimeout(2600);
-await step('开始游戏', async () => { await p.locator('#btn-begin-game').click(); await p.waitForTimeout(600); return p.evaluate(() => !document.querySelector('#narration-container').classList.contains('hidden') || !document.querySelector('#intro-text').classList.contains('hidden')); });
-await step('跳过旁白', async () => { await p.evaluate(() => document.querySelector('#btn-skip-intro')?.click()); await p.waitForTimeout(400); return p.evaluate(() => !!document.querySelector('#btn-start')); });
+await step('开始游戏', async () => { await p.locator('#btn-begin-game').click(); await p.waitForTimeout(600); return p.evaluate(() => !document.querySelector('#narration-container').classList.contains('hidden') && !!document.querySelector('#intro-video')); });
+await step('跳过速报', async () => { await p.evaluate(() => document.querySelector('#btn-skip-intro')?.click()); await p.waitForTimeout(400); return p.evaluate(() => !!document.querySelector('#btn-start')); });
 await step('进入调查', async () => { await p.evaluate(() => document.querySelector('#btn-start')?.click()); await p.waitForTimeout(600); return p.evaluate(() => !document.querySelector('#phase-invest').classList.contains('hidden')); });
 
 // 收集全部物证

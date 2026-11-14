@@ -783,6 +783,86 @@ section('11 · 第二轮评审修复回归');
 }
 
 /* ============================================================
+ * 12. 开场剧情改由视频讲述（v3.8 回归，钉死防回退）
+ * ------------------------------------------------------------
+ * 旧实现是「旁白 MP3 + 三句硬编码字幕 + 14.5s 定时器」。
+ * 现在画面自带旁白与字幕，游戏侧只做播放/倒计时/重看/跳过与失败兜底。
+ * ============================================================ */
+section('12 · 开场案情速报视频契约');
+{
+  const html = read('index.html');
+  const gameSrc = read('js/game.js');
+  const audioSrc = read('js/audio.js');
+  const caseSrc = read('js/case-data.js');
+  const cssSrc = read('css/style.css');
+
+  // 12.1 载体：视频元素在位，且不写死 controls/autoplay（控件走游戏内 UI）
+  t(/<video[^>]*id="intro-video"/.test(html), '存在 #intro-video 元素');
+  t(/src="assets\/video\/intro\.mp4"/.test(html), '视频源指向 assets/video/intro.mp4');
+  t(!/<video[^>]*\bcontrols\b/.test(html), '视频不写原生 controls（避免与游戏 UI 双重叠加）');
+  t(!/<video[^>]*\bautoplay\b/.test(html), '视频不写死 autoplay（由玩家点击触发）');
+  t(/playsinline/.test(html), '视频带 playsinline（iOS 不强制全屏）');
+
+  // 12.2 旧载体已彻底移除：音频旁白驱动器、字幕节点、数据层时间码表
+  t(!/playNarration|stopNarration|narrationEl|narrationResumeHandler/.test(audioSrc),
+    'audio.js 已无旁白音频驱动器');
+  t(!/sub-1|sub-2|sub-3|sub-line/.test(html + cssSrc + gameSrc),
+    '无三句硬编码字幕节点/样式残留');
+  t(!/CASE\.narration|\bnarration:\s*\[/.test(caseSrc),
+    'case-data.js 已移除 narration 时间码字段');
+  t(!/assets\/audio\//.test(html + gameSrc + audioSrc),
+    '无对旧 assets/audio/ 的引用');
+
+  // 12.3 播放控制权只在 game.js：audio 只做静音联动
+  t(/bindIntroVideo\(/.test(audioSrc) && /syncIntroVideoMute\(/.test(audioSrc),
+    'audio.js 提供视频静音联动（bindIntroVideo / syncIntroVideoMute）');
+  t(!/\bplay\(/.test(audioSrc), 'audio.js 不接管视频播放');
+
+  // 12.4 幽灵回声防线：跳过/收尾必须摘掉续播监听再 pause
+  t(/introResumeHandler/.test(gameSrc), '持有 introResumeHandler 引用');
+  {
+    const stopFn = (() => {
+      const m = gameSrc.match(/function stopIntroPlayback\(\)[\s\S]*?\n\}/);
+      return m ? m[0] : '';
+    })();
+    t(stopFn.length > 0, '定位到 stopIntroPlayback()');
+    if (stopFn) {
+      const rm = stopFn.indexOf('removeEventListener');
+      const pause = stopFn.indexOf('pause()');
+      t(rm >= 0 && pause >= 0 && rm < pause,
+        'stopIntroPlayback 先摘监听再 pause（顺序即幽灵回声防线）');
+    }
+  }
+
+  // 12.5 收尾幂等：ended 与定时器兜底共用一个收口，守卫避免引导弹两次
+  {
+    const finFn = (() => {
+      const m = gameSrc.match(/function finishIntroNarration\(\)[\s\S]*?\n\}/);
+      return m ? m[0] : '';
+    })();
+    t(/introNarrationDone/.test(finFn), 'finishIntroNarration 带幂等守卫');
+    t(/introNarrationDone\s*=\s*false/.test(gameSrc), '每次重播重置收尾守卫');
+  }
+
+  // 12.6 时长以视频元数据为准（读不到才回落常量），不写死 14.5
+  t(/function introDuration\(/.test(gameSrc), '提供 introDuration()');
+  t(/video\.duration/.test(gameSrc), '时长读取视频元数据');
+  t(!/\b14\.5\b/.test(gameSrc), '已无旧 14.5s 定时常量');
+  t(/INTRO_VIDEO_DURATION\s*=\s*10\.0/.test(gameSrc), '回落常量 10.0 与素材一致');
+
+  // 12.7 加载失败可见：不让开场黑屏
+  t(/id="intro-video-fallback"/.test(html), '存在视频加载失败的文字兜底节点');
+  t(/video\.addEventListener\('error'/.test(gameSrc), '监听 error 事件亮出兜底文案');
+
+  // 12.8 素材真实存在且被 .gitignore 放行（否则线上 404 黑屏）
+  const fs = await import('node:fs');
+  t(fs.existsSync(resolve(ROOT, 'assets/video/intro.mp4')), 'assets/video/intro.mp4 存在');
+  const gi = read('.gitignore');
+  t(/!assets\/video\/intro\.mp4/.test(gi), '.gitignore 放行开场视频');
+  t(!/!assets\/audio\/intro-narration\.mp3/.test(gi), '.gitignore 已移除旧音频白名单');
+}
+
+/* ============================================================
  * 汇总
  * ============================================================ */
 /* ---------- README 断言数对账（运行时总数，不写死数字） ----------

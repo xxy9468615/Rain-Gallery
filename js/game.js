@@ -1021,11 +1021,18 @@ function roomArtSVG(room) {
 }
 
 /* ============================================================
- * 第一幕：开场（15秒情景讲述 + 旁白同步 + 零日志AI引导）
+ * 第一幕：开场（10 秒案情速报视频 + 零日志 AI 引导）
+ * ------------------------------------------------------------
+ * 剧情讲述由 assets/video/intro.mp4 一力承担：画面自带雨夜画廊场景、
+ * 旁白语音与字幕卡，播完即进游戏。这里只做三件事：
+ *   1. 驱动播放 / 重播 / 跳过，并同步倒计时与进度条
+ *   2. 视频加载失败时给出可读兜底（不静默黑屏）
+ *   3. 播完把「序章文案」渲染进 intro-text 作为档案式补充
  * ============================================================ */
 
-let narrationTimer = null;
 let narrationProgressTimer = null;
+let introResumeHandler = null;   // 视频被自动播放策略拦截时的续播回调（跳过时必须摘掉）
+let introNarrationDone = false;  // 收尾守卫：定时器兜底与 ended 事件共用一个收口
 
 function updateIntroAICard() {
   const cardBadge = $('intro-ai-badge');
@@ -1040,6 +1047,44 @@ function updateIntroAICard() {
   }
 }
 
+/** 序章文案（案件档案视角，与视频画面互补，不重复念白内容） */
+function introArchiveText() {
+  // CASE.intro 是静态字面量，但仍走 escapeHtml：与 renderEvalBox / openEvidenceModal
+  // 保持同一规则，避免以后有 AI/存档内容流进来时漏改（CodeRabbit 抓到过同类不一致）。
+  return CASE.intro.map((p) => `<p class="intro-p">${escapeHtml(p)}</p>`).join('');
+}
+
+/** 速报视频的 DOM 就绪状态：元素缺失时整个开场不得卡死（文本兜底接管） */
+function hasIntroVideo() {
+  const v = $('intro-video');
+  return !!v && typeof v.play === 'function';
+}
+
+/** 一次性绑定速报视频的媒体事件（幂等；避免每次重看都叠加一套监听器） */
+function bindIntroVideoEvents() {
+  const video = $('intro-video');
+  if (!video || video.dataset.bound === '1') return;
+  video.dataset.bound = '1';
+
+  // 加载失败：亮出文字兜底并允许直接跳过（不让开场变黑屏）
+  video.addEventListener('error', () => {
+    const fb = $('intro-video-fallback');
+    if (fb) fb.classList.remove('hidden');
+  });
+  // 自然播完：走统一收口（内部带幂等守卫，与定时器兜底不会重复触发引导）
+  video.addEventListener('ended', () => finishIntroNarration());
+  // 元数据就绪：校准倒计时（首帧前 duration 可能还是 NaN）
+  video.addEventListener('loadedmetadata', () => {
+    const ce = $('narration-countdown');
+    if (ce) ce.textContent = `00:${Math.max(0, Math.ceil(introDuration(video))).toString().padStart(2, '0')}`;
+  });
+  // 若节点在绑定前就已就绪（preload 命中缓存），上面的监听会错过事件，这里补一次
+  if (video.readyState >= 1) {
+    const ce = $('narration-countdown');
+    if (ce) ce.textContent = `00:${Math.max(0, Math.ceil(introDuration(video))).toString().padStart(2, '0')}`;
+  }
+}
+
 function startNarrationStory() {
   audio.ensure();
   audio.startRain();
@@ -1048,64 +1093,89 @@ function startNarrationStory() {
 
   const progressBar = $('narration-progress');
   const countdownEl = $('narration-countdown');
-  const sub1 = $('sub-1');
-  const sub2 = $('sub-2');
-  const sub3 = $('sub-3');
+  const video = $('intro-video');
+  const fallback = $('intro-video-fallback');
 
-  if (narrationTimer) clearInterval(narrationTimer);
+  stopIntroPlayback();
+
   if (narrationProgressTimer) clearInterval(narrationProgressTimer);
+  introNarrationDone = false;   // 每次重播都允许重新走一遍收尾
 
-  const TOTAL_DURATION = 14.5;
   const startTime = performance.now();
 
-  function updateSubtitles(cur) {
-    if (cur < 6.4) {
-      if (sub1) sub1.className = 'sub-line active';
-      if (sub2) sub2.className = 'sub-line';
-      if (sub3) sub3.className = 'sub-line';
-    } else if (cur < 9.8) {
-      if (sub1) sub1.className = 'sub-line done';
-      if (sub2) sub2.className = 'sub-line active';
-      if (sub3) sub3.className = 'sub-line';
-    } else if (cur < 13.2) {
-      if (sub1) sub1.className = 'sub-line done';
-      if (sub2) sub2.className = 'sub-line done';
-      if (sub3) sub3.className = 'sub-line active';
-    } else {
-      if (sub1) sub1.className = 'sub-line done';
-      if (sub2) sub2.className = 'sub-line done';
-      if (sub3) sub3.className = 'sub-line done';
-    }
+  if (fallback) fallback.classList.add('hidden');
+
+  if (!hasIntroVideo()) {
+    // 极端情况：DOM 缺失或元素不可用——直接走文本兜底，不让开场卡死
+    if (fallback) fallback.classList.remove('hidden');
+    finishIntroNarration();
+    return;
   }
 
-  // 播放开场旁白
-  audio.playNarration('assets/audio/intro-narration.mp3', {
-    onTimeUpdate: (cur) => {
-      updateSubtitles(cur);
-    },
-    onEnded: () => {
-      finishIntroNarration();
-    },
-  });
+  // 每次重播都从头开始：视频自身的旁白/字幕是唯一剧情来源
+  try { video.currentTime = 0; } catch (e) { /* 部分浏览器 seek 前会抛，忽略 */ }
 
   narrationProgressTimer = setInterval(() => {
     const elapsed = (performance.now() - startTime) / 1000;
-    const remain = Math.max(0, Math.ceil(TOTAL_DURATION - elapsed));
+    // 时长以视频自身为准（就绪后读得到）；读不到才回落常量
+    const total = introDuration(video);
+    const remain = Math.max(0, Math.ceil(total - elapsed));
     if (countdownEl) countdownEl.textContent = `00:${remain.toString().padStart(2, '0')}`;
-    const pct = Math.min(100, (elapsed / TOTAL_DURATION) * 100);
+    const pct = Math.min(100, (elapsed / total) * 100);
     if (progressBar) progressBar.style.width = `${pct}%`;
 
-    updateSubtitles(elapsed);
-
-    if (elapsed >= TOTAL_DURATION) {
+    // 视频已自然播完：以 ended 事件为准；定时器只是兜底（页面挂起时事件可能延迟）
+    if (video.ended || elapsed >= total) {
       finishIntroNarration();
     }
   }, 100);
+
+  // 媒体事件只需绑定一次（幂等）：ended / error / loadedmetadata 都收敛在这里，
+  // 避免反复「重看」时每次 start 都叠加一套监听器。
+  bindIntroVideoEvents();
+
+  const playPromise = video.play();
+  if (playPromise && typeof playPromise.catch === 'function') {
+    // 浏览器若因无交互拦截（开始按钮本身已是手势，理论上不会走到这里）
+    playPromise.catch(() => {
+      if (fallback) fallback.classList.remove('hidden');
+      // 等用户任意一次交互后自动续播；引用变量持有，跳过时能摘掉监听
+      const resumeOnce = () => {
+        if (!video.ended) video.play().catch(() => {});
+      };
+      introResumeHandler = resumeOnce;
+      window.addEventListener('pointerdown', resumeOnce, { once: true });
+      window.addEventListener('keydown', resumeOnce, { once: true });
+    });
+  }
+}
+
+/** 视频时长（秒）：就绪后取元数据，未就绪回落到与素材一致的常量 */
+const INTRO_VIDEO_DURATION = 10.0;   // assets/video/intro.mp4：24fps × 240 帧
+function introDuration(video) {
+  const d = video && video.duration;
+  return Number.isFinite(d) && d > 0 ? d : INTRO_VIDEO_DURATION;
+}
+
+/** 停止视频播放并摘掉在途的续播监听（防止「跳过后再出声」的幽灵回声） */
+function stopIntroPlayback() {
+  if (introResumeHandler) {
+    window.removeEventListener('pointerdown', introResumeHandler);
+    window.removeEventListener('keydown', introResumeHandler);
+    introResumeHandler = null;
+  }
+  const video = $('intro-video');
+  if (!video) return;
+  try { video.pause(); } catch (e) { /* ignore */ }
+  try { video.currentTime = 0; } catch (e) { /* ignore */ }
 }
 
 function finishIntroNarration() {
-  audio.stopNarration(200);
-  if (narrationTimer) { clearInterval(narrationTimer); narrationTimer = null; }
+  // 收尾幂等：定时器兜底与 ended 事件可能都触发本函数，守卫避免引导弹两次/文案填两次
+  if (introNarrationDone) return;
+  introNarrationDone = true;
+
+  stopIntroPlayback();
   if (narrationProgressTimer) { clearInterval(narrationProgressTimer); narrationProgressTimer = null; }
 
   const progressBar = $('narration-progress');
@@ -1113,17 +1183,12 @@ function finishIntroNarration() {
   if (progressBar) progressBar.style.width = '100%';
   if (countdownEl) countdownEl.textContent = '00:00';
 
-  ['sub-1', 'sub-2', 'sub-3'].forEach((id) => {
-    const el = $(id);
-    if (el) el.className = 'sub-line done';
-  });
-
   const introText = $('intro-text');
   if (introText) {
     introText.classList.remove('hidden');
     if (!introText.dataset.filled) {
       introText.dataset.filled = '1';
-      introText.innerHTML = CASE.intro.map((p) => `<p class="intro-p">${p}</p>`).join('');
+      introText.innerHTML = introArchiveText();
     }
   }
 
@@ -1276,6 +1341,8 @@ function setupIntroGateway(hasSave) {
   if (narrationContainer) narrationContainer.classList.add('hidden');
   if (introText) introText.classList.add('hidden');
   if (introActions) introActions.classList.add('hidden');
+  // 回到封面时确保速报停在起点：否则「开始新游戏」会从上次的进度接着播
+  stopIntroPlayback();
 
   if (resumable) {
     const saveActions = $('cover-save-actions');
@@ -2972,6 +3039,10 @@ function initVisualizerAndAudioControls() {
     });
   }
 
+  // 开场案情速报视频：跟随全局静音（画面自带旁白，这里只做声音治理）
+  const introVideo = $('intro-video');
+  if (introVideo) audio.bindIntroVideo(introVideo);
+
   // 声波律动仪
   const visualizer = $('audio-visualizer');
   const bars = visualizer ? visualizer.querySelectorAll('.v-bar') : [];
@@ -3202,6 +3273,11 @@ function bindEvents() {
       const nar = $('narration-container');
       if (nar) nar.classList.remove('hidden');
       startNarrationStory();
+      // 面板刚露出就把焦点交给「跳过讲述」：键盘/读屏玩家不必 Tab 一整圈
+      setTimeout(() => {
+        const skipBtn = $('btn-skip-intro');
+        if (skipBtn) skipBtn.focus({ preventScroll: true });
+      }, 60);
     });
   }
 
@@ -3234,7 +3310,7 @@ function bindEvents() {
     // v3.2 · 仅 AI 模式：未接入 AI 不可进入调查
     if (!requireAI(() => $('btn-start').click())) return;
     audio.ensure();
-    audio.stopNarration(150);
+    stopIntroPlayback();
     audio.startRain();
     audio.startBgm();
     scheduleThunder();

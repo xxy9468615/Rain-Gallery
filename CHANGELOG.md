@@ -2,6 +2,41 @@
 
 《雨夜画廊》全部版本记录。按语义化版本升号；日期为提交/改动完成日。
 
+## [3.8.0] — 2026-11-14 · 「开场剧情改由视频讲述」
+
+> 开场不再由「语音 MP3 + 硬编码字幕 + 定时器」拼装，改为一段 AI 生成的 10 秒案情速报视频：
+> 画面自带雨夜画廊场景、旁白语音与字幕卡，播完即进游戏。游戏侧只保留倒计时、进度条、重看与跳过，
+> 并在视频加载失败时回落为文字兜底。
+
+### Changed
+
+- **开场叙事载体换成视频** `assets/video/intro.mp4`（10.0s / 1280×720 / 24fps / H.264 + AAC）：
+  移除 `assets/audio/intro-narration.mp3` 与 `CASE.narration` 时间码表、`.sub-line` 三句字幕
+- **`js/audio.js` 移除旁白音频驱动器**（`playNarration` / `stopNarration` / `narrationEl`），
+  改为 `bindIntroVideo()` / `syncIntroVideoMute()`：视频音量只跟随全局静音开关，
+  不再由引擎接管播放（播放/暂停/seek 一律由 `game.js` 决定，避免两套控制权打架）
+- **`js/game.js` 开场时序重写**：`introDuration()` 以视频元数据为准（读不到回落 10.0s 常量），
+  倒计时与进度条同步真实时长；`ended` 事件为主、定时器兜底
+- **`stopIntroPlayback()` 摘除续播监听**（`introResumeHandler`）：延续原「幽灵回声」缺陷的教训，
+  跳过/进游戏时先注销 `pointerdown/keydown` 续播回调再 pause，杜绝跳过之后视频又出声
+- **`finishIntroNarration()` 加 `introNarrationDone` 幂等守卫**：`ended` 与定时器兜底可能同时触发，
+  守卫避免序章文案重复填充、上手引导弹两次
+- **加载失败可见**：视频 `error` / `play()` 被拦截时亮出 `#intro-video-fallback` 文字要点，
+  玩家可直接「跳过讲述」进游戏，不会黑屏卡死
+- **`#btn-begin-game` 文案**改为「观看案情速报 (10s)」；「↺ 重听」→「↺ 重看」
+
+### Removed
+
+- `assets/audio/intro-narration.mp3` 及其 `.gitignore` 白名单例外（`!assets/audio/intro-narration.mp3`），
+  改为放行 `assets/video/intro.mp4`；`.gitignore` 仍忽略其它 `*.mp4` 演示素材
+- `js/case-data.js` 的 `CASE.narration` 时间码字段（字幕已烧录在视频画面里，数据层不再重复）
+
+### Verification
+
+- `tools/check-syntax.mjs` 全模块 + 跨模块引用 + 块注释配对通过
+- `tools/proxy-base-test.mjs` 205 条断言全通过（新增第 12 节：开场视频契约 25 条，
+  含 README 断言数对账）
+
 ## [3.7.0] — 2026-11-10 · 「大模型架构深化 + 界面重构」
 
 > 六阶段改造：修复 AI 配置链的静默失败、把散落的 prompt 收拢为资产层、
