@@ -31,11 +31,23 @@
   改为放行 `assets/video/intro.mp4`；`.gitignore` 仍忽略其它 `*.mp4` 演示素材
 - `js/case-data.js` 的 `CASE.narration` 时间码字段（字幕已烧录在视频画面里，数据层不再重复）
 
+### Fixed
+
+- **缓冲时开场被提前切断**：进度/收尾原先按墙上时钟（`elapsed >= total`）判定，
+  慢加载或缓冲时 `video.currentTime` 落后墙钟，视频还没播完就被收尾。
+  改为以播放头驱动进度与倒计时，墙钟只作硬超时兜底（`视频时长 + 8s`）。
+- **跳过之后视频可能被下一次点击重新唤起**：`video.play()` 的 `catch` 是异步的，
+  玩家在它执行前点「跳过讲述」时，续播监听会在跳过之后才注册。`catch` 内先判
+  `introNarrationDone` 再注册，`resumeOnce` 也加同一守卫。
+- **切后台/失焦时旁白仍在出声**：`suspendMaster()` 原先复用
+  `syncIntroVideoMute()`（写入全局静音，通常为 false），反而把视频解除静音。
+  改为 `syncIntroVideoMute(true)` 强制静音，回前台再按全局静音恢复。
+
 ### Verification
 
 - `tools/check-syntax.mjs` 全模块 + 跨模块引用 + 块注释配对通过
-- `tools/proxy-base-test.mjs` 205 条断言全通过（新增第 12 节：开场视频契约 25 条，
-  含 README 断言数对账）
+- `tools/proxy-base-test.mjs` 211 条断言全通过（第 12 节开场视频契约 31 条，
+  含上述三处修复的回归断言与 README 断言数对账）
 
 ## [3.7.0] — 2026-11-10 · 「大模型架构深化 + 界面重构」
 

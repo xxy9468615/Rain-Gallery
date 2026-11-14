@@ -86,14 +86,16 @@ class AudioEngine {
 
   /* ---------- 开场案情速报视频：只治理声音，不接管播放 ----------
    * 视频自带旁白与字幕，是唯一剧情来源；这里保证它跟随全局静音开关，
-   * 避免出现「音乐静音了、旁白还在喊」的割裂。 */
+   * 并在切后台/失焦时强制静音，避免「切走了旁白还在响」。
+   * forceMute=true 专供生命周期挂起使用，与玩家手动静音解耦。 */
   bindIntroVideo(el) {
     this.introVideoEl = el || null;
     this.syncIntroVideoMute();
   }
 
-  syncIntroVideoMute() {
-    if (this.introVideoEl) this.introVideoEl.muted = this.muted;
+  syncIntroVideoMute(forceMute = false) {
+    if (!this.introVideoEl) return;
+    this.introVideoEl.muted = forceMute ? true : this.muted;
   }
 
   /* ---------- 前后台生命周期联动（切后台自动挂起，回前台平滑恢复） ----------
@@ -104,7 +106,8 @@ class AudioEngine {
     const t = this.ctx.currentTime;
     this.masterGain.gain.cancelScheduledValues(t);
     this.masterGain.gain.setTargetAtTime(0, t, 0.03);
-    this.syncIntroVideoMute();
+    // 失焦/切后台：无论全局是否静音，视频旁白都必须立刻闭嘴
+    this.syncIntroVideoMute(true);
   }
 
   resumeMaster() {
@@ -112,6 +115,7 @@ class AudioEngine {
     const t = this.ctx.currentTime;
     this.masterGain.gain.cancelScheduledValues(t);
     this.masterGain.gain.setTargetAtTime(this.muted ? 0 : 1, t, 0.08);
+    // 回前台：恢复为玩家设定的全局静音状态
     this.syncIntroVideoMute();
   }
 

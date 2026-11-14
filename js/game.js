@@ -1101,7 +1101,7 @@ function startNarrationStory() {
   if (narrationProgressTimer) clearInterval(narrationProgressTimer);
   introNarrationDone = false;   // 每次重播都允许重新走一遍收尾
 
-  const startTime = performance.now();
+  const wallStart = performance.now();
 
   if (fallback) fallback.classList.add('hidden');
 
@@ -1116,16 +1116,20 @@ function startNarrationStory() {
   try { video.currentTime = 0; } catch (e) { /* 部分浏览器 seek 前会抛，忽略 */ }
 
   narrationProgressTimer = setInterval(() => {
-    const elapsed = (performance.now() - startTime) / 1000;
     // 时长以视频自身为准（就绪后读得到）；读不到才回落常量
     const total = introDuration(video);
-    const remain = Math.max(0, Math.ceil(total - elapsed));
+    // 进度以播放头为准：缓冲/卡顿时 currentTime 不前进，倒计时与进度不会抢跑，
+    // 也不会把还没播完的开场提前切断（CodeRabbit 抓到）。
+    const cur = Math.min(total, Math.max(0, video.currentTime || 0));
+    const remain = Math.max(0, Math.ceil(total - cur));
     if (countdownEl) countdownEl.textContent = `00:${remain.toString().padStart(2, '0')}`;
-    const pct = Math.min(100, (elapsed / total) * 100);
-    if (progressBar) progressBar.style.width = `${pct}%`;
+    if (progressBar) progressBar.style.width = `${Math.min(100, (cur / total) * 100)}%`;
 
-    // 视频已自然播完：以 ended 事件为准；定时器只是兜底（页面挂起时事件可能延迟）
-    if (video.ended || elapsed >= total) {
+    // 自然结束以 ended 事件为准；这里只兜底两种异常：
+    //   1) 视频解码/加载失败（video.error）
+    //   2) 长时间毫无进展（硬超时），避免永久卡在开场
+    const wall = (performance.now() - wallStart) / 1000;
+    if (video.error || wall > total + INTRO_HARD_TIMEOUT_S) {
       finishIntroNarration();
     }
   }, 100);
@@ -1138,10 +1142,13 @@ function startNarrationStory() {
   if (playPromise && typeof playPromise.catch === 'function') {
     // 浏览器若因无交互拦截（开始按钮本身已是手势，理论上不会走到这里）
     playPromise.catch(() => {
+      // 关键竞态：catch 是异步的，玩家可能在它执行之前就点了「跳过讲述」，
+      // 或视频已收尾。此时绝不能再注册续播监听，否则下一次点击/按键会把视频又放起来。
+      if (introNarrationDone) return;
       if (fallback) fallback.classList.remove('hidden');
       // 等用户任意一次交互后自动续播；引用变量持有，跳过时能摘掉监听
       const resumeOnce = () => {
-        if (!video.ended) video.play().catch(() => {});
+        if (!video.ended && !introNarrationDone) video.play().catch(() => {});
       };
       introResumeHandler = resumeOnce;
       window.addEventListener('pointerdown', resumeOnce, { once: true });
@@ -1152,6 +1159,7 @@ function startNarrationStory() {
 
 /** 视频时长（秒）：就绪后取元数据，未就绪回落到与素材一致的常量 */
 const INTRO_VIDEO_DURATION = 10.0;   // assets/video/intro.mp4：24fps × 240 帧
+const INTRO_HARD_TIMEOUT_S = 8;      // 硬超时余量：视频时长之外仍未结束则强制收尾
 function introDuration(video) {
   const d = video && video.duration;
   return Number.isFinite(d) && d > 0 ? d : INTRO_VIDEO_DURATION;

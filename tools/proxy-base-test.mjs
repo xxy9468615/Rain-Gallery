@@ -860,6 +860,28 @@ section('12 · 开场案情速报视频契约');
   const gi = read('.gitignore');
   t(/!assets\/video\/intro\.mp4/.test(gi), '.gitignore 放行开场视频');
   t(!/!assets\/audio\/intro-narration\.mp3/.test(gi), '.gitignore 已移除旧音频白名单');
+
+  // 12.9 CodeRabbit 复核修复：慢加载不抢跑 / 跳过不重启 / 失焦不出声
+  t(/video\.currentTime/.test(gameSrc)
+    && /const cur = Math\.min\(total, Math\.max\(0, video\.currentTime/.test(gameSrc),
+    '进度/倒计时以播放头 currentTime 驱动（缓冲不抢跑）');
+  t(!/elapsed >= total/.test(gameSrc), '不再用墙上时钟 elapsed>=total 提前收尾');
+  {
+    // 跳过竞态：play().catch 内必须先判取消标志，再注册续播监听
+    const iCatch = gameSrc.indexOf('playPromise.catch');
+    const iGuard = gameSrc.indexOf('if (introNarrationDone) return;', iCatch);
+    const iAdd = gameSrc.indexOf("addEventListener('pointerdown', resumeOnce", iCatch);
+    t(iCatch >= 0 && iGuard > iCatch && iAdd > iGuard,
+      'play().catch 先判取消标志再注册续播（跳过不重启）');
+  }
+  {
+    const susp = (audioSrc.match(/suspendMaster\(\)\s*\{[\s\S]*?\n  \}/) || [''])[0];
+    const resm = (audioSrc.match(/resumeMaster\(\)\s*\{[\s\S]*?\n  \}/) || [''])[0];
+    t(/syncIntroVideoMute\(true\)/.test(susp), '失焦/切后台时强制静音视频');
+    t(/syncIntroVideoMute\(\)/.test(resm), '回前台按全局静音恢复');
+  }
+  t(/syncIntroVideoMute\(forceMute\s*=\s*false\)/.test(audioSrc),
+    'syncIntroVideoMute 支持强制静音参数');
 }
 
 /* ============================================================
