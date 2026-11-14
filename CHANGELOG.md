@@ -48,6 +48,23 @@
 - `tools/check-syntax.mjs` 全模块 + 跨模块引用 + 块注释配对通过
 - `tools/proxy-base-test.mjs` 211 条断言全通过（第 12 节开场视频契约 31 条，
   含上述三处修复的回归断言与 README 断言数对账）
+- `tools/e2e-real.mjs`（真实 backend :8092 + 真实上游 `gemma-4-31B-it` + Playwright Chromium）
+  - 开场链路真机跑通：`开始游戏` → `跳过速报` → `进入调查` → 物证 11/11 → `进入审讯`
+  - `#phase-interrogate` 三维数值条 ≥3、求助按钮「🧭 求助（剩 3/3 次）」在位、证据对峙条 11 个物证图标
+  - `pageerror` / `console.error` 均为 0
+- 开场视频独立探针（真实 Chromium 解码）：`h264=probably`、`readyState=4`、`duration=10.0267`、`errorCode=null`；
+  1.5s 内 `currentTime` 推进 1.50s、倒计时 `00:08`、进度 `28.85%`、兜底文案未亮；
+  快进至尾 → `#intro-text[data-filled=1]` + `#intro-actions` 就位、倒计时 `00:00`、进度 `100%`；
+  点「↺ 重看」→ 从 0 重播、倒计时回 `00:10`、进度重新爬升，`pageerror` 为 0
+
+### Known issues / test environment
+
+- 上游 `gemma-4-31B-it` 在推理模型下会先吐思维链（已由 `createStreamSanitizer` 服务端/客户端剥离），
+  实测首个可见 delta 在 **10.5s** 才到达，其后 180ms 内吐完全部增量。`e2e-real.mjs` 以 1s 间隔轮询
+  `.bubble.suspect.streaming`，两处采样点恰好落在首字之前与结束之后，因此打印 `NOT-streamed`——
+  这是采样器口径问题，不是流式链路失效；改为 `MutationObserver` 采样前不宜据此判定。
+- 本机 Playwright 的 Chromium 缺 `libnspr4` / `libnss3` / `libasound`，且 `sudo` 需密码。补库办法
+  （`apt-get download` + `dpkg-deb -x` + `LD_LIBRARY_PATH`）**不写入仓库、不进 CI**：CI runner 需自备浏览器依赖。
 
 ## [3.7.0] — 2026-11-10 · 「大模型架构深化 + 界面重构」
 
