@@ -13,14 +13,14 @@ ms_deploy.json
 .idea/
 *.log
 
-# 录屏、视频文件
+# 录屏、视频文件（游戏运行必需的开场速报除外）
 *.mp4
 *.webm
+!assets/video/intro.mp4
 
 # 配音、音频素材
 *.wav
 *.mp3
-!assets/audio/intro-narration.mp3
 *.ogg
 *.srt
 配音分段/

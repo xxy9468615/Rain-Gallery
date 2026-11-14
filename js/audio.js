@@ -4,7 +4,7 @@
  * - D 小调悬疑环境配乐（Film Noir Drone）+ 生成式雨夜琴音（Generative Chimes）
  * - 室内低通白噪暴雨声 + 偶发低频超重低音闷雷
  * - AnalyserNode 实时声学能量分析器（输出低频/总体音量供 UI 律动）
- * - 开场 15 秒旁白音频驱动器（带精准时间码与平滑淡出）
+ * - 开场案情速报视频的音量/静音联动（画面自带旁白与字幕，这里只做声音治理）
  * ============================================================ */
 
 import { storage } from './storage.js?v=3.6.0';
@@ -28,8 +28,8 @@ class AudioEngine {
     this.bgmTimer = null;
     this.bgmRunning = false;
 
-    // 旁白语音播放器
-    this.narrationEl = null;
+    // 开场案情速报视频元素（只读引用；播放/暂停由 game.js 驱动）
+    this.introVideoEl = null;
 
     // 状态
     this.muted = false;
@@ -81,9 +81,21 @@ class AudioEngine {
       this.masterGain.gain.cancelScheduledValues(t);
       this.masterGain.gain.linearRampToValueAtTime(this.muted ? 0 : 1, t + 0.1);
     }
-    if (this.narrationEl) {
-      this.narrationEl.muted = this.muted;
-    }
+    this.syncIntroVideoMute();
+  }
+
+  /* ---------- 开场案情速报视频：只治理声音，不接管播放 ----------
+   * 视频自带旁白与字幕，是唯一剧情来源；这里保证它跟随全局静音开关，
+   * 并在切后台/失焦时强制静音，避免「切走了旁白还在响」。
+   * forceMute=true 专供生命周期挂起使用，与玩家手动静音解耦。 */
+  bindIntroVideo(el) {
+    this.introVideoEl = el || null;
+    this.syncIntroVideoMute();
+  }
+
+  syncIntroVideoMute(forceMute = false) {
+    if (!this.introVideoEl) return;
+    this.introVideoEl.muted = forceMute ? true : this.muted;
   }
 
   /* ---------- 前后台生命周期联动（切后台自动挂起，回前台平滑恢复） ----------
@@ -94,7 +106,8 @@ class AudioEngine {
     const t = this.ctx.currentTime;
     this.masterGain.gain.cancelScheduledValues(t);
     this.masterGain.gain.setTargetAtTime(0, t, 0.03);
-    if (this.narrationEl) this.narrationEl.muted = true;
+    // 失焦/切后台：无论全局是否静音，视频旁白都必须立刻闭嘴
+    this.syncIntroVideoMute(true);
   }
 
   resumeMaster() {
@@ -102,7 +115,8 @@ class AudioEngine {
     const t = this.ctx.currentTime;
     this.masterGain.gain.cancelScheduledValues(t);
     this.masterGain.gain.setTargetAtTime(this.muted ? 0 : 1, t, 0.08);
-    if (this.narrationEl) this.narrationEl.muted = this.muted;
+    // 回前台：恢复为玩家设定的全局静音状态
+    this.syncIntroVideoMute();
   }
 
   /** 安装 visibilitychange / blur 管线（幂等，重复调用安全） */
@@ -383,72 +397,6 @@ class AudioEngine {
     });
   }
 
-  /* ---------- 开场 15 秒情景讲述音频播放器 ---------- */
-  playNarration(src = 'assets/audio/intro-narration.mp3', { onTimeUpdate, onEnded, onError } = {}) {
-    this.stopNarration(0);
-    const el = new Audio(src);
-    el.muted = this.muted;
-    el.volume = 1.0;
-
-    if (onTimeUpdate) {
-      el.addEventListener('timeupdate', () => {
-        onTimeUpdate(el.currentTime, el.duration || 12.64);
-      });
-    }
-    if (onEnded) {
-      el.addEventListener('ended', onEnded);
-    }
-    el.addEventListener('error', (e) => {
-      if (onError) onError(e);
-    });
-
-    const resumeOnce = () => {
-      this._clearNarrationResume();
-      if (this.narrationEl === el && !el.ended) {
-        el.play().catch(() => {});
-      }
-    };
-
-    el.play().catch(() => {
-      // 浏览器若因无交互拦截，等待用户第一次交互自动续播
-      this.narrationResumeHandler = resumeOnce;
-      window.addEventListener('pointerdown', resumeOnce, { once: true });
-      window.addEventListener('keydown', resumeOnce, { once: true });
-    });
-
-    this.narrationEl = el;
-    return el;
-  }
-
-  _clearNarrationResume() {
-    if (this.narrationResumeHandler) {
-      window.removeEventListener('pointerdown', this.narrationResumeHandler);
-      window.removeEventListener('keydown', this.narrationResumeHandler);
-      this.narrationResumeHandler = null;
-    }
-  }
-
-  stopNarration(fadeMs = 300) {
-    this._clearNarrationResume();
-    if (!this.narrationEl) return;
-    const el = this.narrationEl;
-    this.narrationEl = null;
-
-    if (fadeMs > 0 && el.volume > 0) {
-      const step = 0.05;
-      const interval = fadeMs / (el.volume / step);
-      const timer = setInterval(() => {
-        if (el.volume > step) {
-          el.volume = Math.max(0, el.volume - step);
-        } else {
-          clearInterval(timer);
-          try { el.pause(); el.src = ''; } catch (e) { /* ignore */ }
-        }
-      }, interval);
-    } else {
-      try { el.pause(); el.src = ''; } catch (e) { /* ignore */ }
-    }
-  }
 }
 
 export const audio = new AudioEngine();

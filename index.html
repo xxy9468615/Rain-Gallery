@@ -37,9 +37,9 @@
         <h1 class="game-title">雨夜画廊</h1>
         <p class="game-sub">暴雨夜的私人美术馆 · 一幅被毁的镇馆之宝 · 三种谎言</p>
 
-        <!-- 初始封面操作区（等待玩家点击开始，解锁音频手势并防止误跳过） -->
+        <!-- 初始封面操作区（等待玩家点击开始，解锁媒体手势并防止误跳过） -->
         <div id="intro-cover-actions" class="intro-cover-actions">
-          <button id="btn-begin-game" class="primary-btn pulse-glow">▶ 点击开始游戏 · 开启案情叙事 (15s)</button>
+          <button id="btn-begin-game" class="primary-btn pulse-glow">▶ 点击开始游戏 · 观看案情速报 (10s)</button>
 
           <div id="cover-save-actions" class="cover-save-actions hidden">
             <button id="btn-resume-game" class="ghost-btn">📂 继续上次调查 (<span id="resume-phase-desc"></span>)</button>
@@ -49,20 +49,22 @@
           <p class="hint-line">🎧 建议开启声音佩戴耳机 · 纯代码实时合成音效与配乐 · 约 10~20 分钟通关</p>
         </div>
 
-        <!-- 15秒情景讲述面板（点击开始游戏后播放） -->
+        <!-- 10 秒案情速报视频（点击开始游戏后播放，画面自带旁白与字幕） -->
         <div id="narration-container" class="narration-container hidden">
           <div class="narration-header">
-            <span class="narration-badge">🎙️ 案情速报 · 15 秒情景讲述</span>
-            <span id="narration-countdown" class="narration-countdown">00:15</span>
+            <span class="narration-badge">🎬 案情速报 · 10 秒视频讲述</span>
+            <span id="narration-countdown" class="narration-countdown">00:10</span>
           </div>
           <div class="narration-progress-bar"><div id="narration-progress" class="narration-progress"></div></div>
-          <div id="narration-subtitles" class="narration-subtitles">
-            <p id="sub-1" class="sub-line active">暴雨深夜，一家私人画廊里，镇馆之宝被人划毁，守夜人倒地昏迷。</p>
-            <p id="sub-2" class="sub-line">馆内三名嫌疑人，三种谎言。</p>
-            <p id="sub-3" class="sub-line">天亮之前，你能找出真相吗？</p>
-          </div>
+          <!-- playsinline：iOS 不强制全屏；不写 controls/autoplay——播放由 JS 驱动，
+               控件用本面板的「重看 / 跳过讲述」，避免浏览器原生控件与游戏内 UI 双重叠加 -->
+          <video id="intro-video" class="intro-video" playsinline preload="auto"
+                 src="assets/video/intro.mp4" aria-label="案情速报：暴雨深夜，一家私人画廊里，镇馆之宝被人划毁，守夜人倒地昏迷。馆内三名嫌疑人，三种谎言。天亮之前，你能找出真相吗？"></video>
+          <p id="intro-video-fallback" class="hint-line hidden">
+            ⚠ 案情速报视频未能加载。剧情要点：暴雨深夜，镇馆之宝《雨后》被人划毁，守夜人昏迷；馆内三名嫌疑人，三种谎言。
+          </p>
           <div class="narration-ctrls">
-            <button id="btn-replay-narration" class="ghost-btn mini-btn" title="重播旁白">↺ 重听</button>
+            <button id="btn-replay-narration" class="ghost-btn mini-btn" title="重播案情速报">↺ 重看</button>
             <button id="btn-skip-intro" class="ghost-btn mini-btn" title="跳过讲述直接开始">跳过讲述 ⏭</button>
           </div>
         </div>

@@ -2,6 +2,70 @@
 
 《雨夜画廊》全部版本记录。按语义化版本升号；日期为提交/改动完成日。
 
+## [3.8.0] — 2026-11-14 · 「开场剧情改由视频讲述」
+
+> 开场不再由「语音 MP3 + 硬编码字幕 + 定时器」拼装，改为一段 AI 生成的 10 秒案情速报视频：
+> 画面自带雨夜画廊场景、旁白语音与字幕卡，播完即进游戏。游戏侧只保留倒计时、进度条、重看与跳过，
+> 并在视频加载失败时回落为文字兜底。
+
+### Changed
+
+- **开场叙事载体换成视频** `assets/video/intro.mp4`（10.0s / 1280×720 / 24fps / H.264 + AAC）：
+  移除 `assets/audio/intro-narration.mp3` 与 `CASE.narration` 时间码表、`.sub-line` 三句字幕
+- **`js/audio.js` 移除旁白音频驱动器**（`playNarration` / `stopNarration` / `narrationEl`），
+  改为 `bindIntroVideo()` / `syncIntroVideoMute()`：视频音量只跟随全局静音开关，
+  不再由引擎接管播放（播放/暂停/seek 一律由 `game.js` 决定，避免两套控制权打架）
+- **`js/game.js` 开场时序重写**：`introDuration()` 以视频元数据为准（读不到回落 10.0s 常量），
+  倒计时与进度条同步真实时长；`ended` 事件为主、定时器兜底
+- **`stopIntroPlayback()` 摘除续播监听**（`introResumeHandler`）：延续原「幽灵回声」缺陷的教训，
+  跳过/进游戏时先注销 `pointerdown/keydown` 续播回调再 pause，杜绝跳过之后视频又出声
+- **`finishIntroNarration()` 加 `introNarrationDone` 幂等守卫**：`ended` 与定时器兜底可能同时触发，
+  守卫避免序章文案重复填充、上手引导弹两次
+- **加载失败可见**：视频 `error` / `play()` 被拦截时亮出 `#intro-video-fallback` 文字要点，
+  玩家可直接「跳过讲述」进游戏，不会黑屏卡死
+- **`#btn-begin-game` 文案**改为「观看案情速报 (10s)」；「↺ 重听」→「↺ 重看」
+
+### Removed
+
+- `assets/audio/intro-narration.mp3` 及其 `.gitignore` 白名单例外（`!assets/audio/intro-narration.mp3`），
+  改为放行 `assets/video/intro.mp4`；`.gitignore` 仍忽略其它 `*.mp4` 演示素材
+- `js/case-data.js` 的 `CASE.narration` 时间码字段（字幕已烧录在视频画面里，数据层不再重复）
+
+### Fixed
+
+- **缓冲时开场被提前切断**：进度/收尾原先按墙上时钟（`elapsed >= total`）判定，
+  慢加载或缓冲时 `video.currentTime` 落后墙钟，视频还没播完就被收尾。
+  改为以播放头驱动进度与倒计时，墙钟只作硬超时兜底（`视频时长 + 8s`）。
+- **跳过之后视频可能被下一次点击重新唤起**：`video.play()` 的 `catch` 是异步的，
+  玩家在它执行前点「跳过讲述」时，续播监听会在跳过之后才注册。`catch` 内先判
+  `introNarrationDone` 再注册，`resumeOnce` 也加同一守卫。
+- **切后台/失焦时旁白仍在出声**：`suspendMaster()` 原先复用
+  `syncIntroVideoMute()`（写入全局静音，通常为 false），反而把视频解除静音。
+  改为 `syncIntroVideoMute(true)` 强制静音，回前台再按全局静音恢复。
+
+### Verification
+
+- `tools/check-syntax.mjs` 全模块 + 跨模块引用 + 块注释配对通过
+- `tools/proxy-base-test.mjs` 211 条断言全通过（第 12 节开场视频契约 31 条，
+  含上述三处修复的回归断言与 README 断言数对账）
+- `tools/e2e-real.mjs`（真实 backend :8092 + 真实上游 `gemma-4-31B-it` + Playwright Chromium）
+  - 开场链路真机跑通：`开始游戏` → `跳过速报` → `进入调查` → 物证 11/11 → `进入审讯`
+  - `#phase-interrogate` 三维数值条 ≥3、求助按钮「🧭 求助（剩 3/3 次）」在位、证据对峙条 11 个物证图标
+  - `pageerror` / `console.error` 均为 0
+- 开场视频独立探针（真实 Chromium 解码）：`h264=probably`、`readyState=4`、`duration=10.0267`、`errorCode=null`；
+  1.5s 内 `currentTime` 推进 1.50s、倒计时 `00:08`、进度 `28.85%`、兜底文案未亮；
+  快进至尾 → `#intro-text[data-filled=1]` + `#intro-actions` 就位、倒计时 `00:00`、进度 `100%`；
+  点「↺ 重看」→ 从 0 重播、倒计时回 `00:10`、进度重新爬升，`pageerror` 为 0
+
+### Known issues / test environment
+
+- 上游 `gemma-4-31B-it` 在推理模型下会先吐思维链（已由 `createStreamSanitizer` 服务端/客户端剥离），
+  实测首个可见 delta 在 **10.5s** 才到达，其后 180ms 内吐完全部增量。`e2e-real.mjs` 以 1s 间隔轮询
+  `.bubble.suspect.streaming`，两处采样点恰好落在首字之前与结束之后，因此打印 `NOT-streamed`——
+  这是采样器口径问题，不是流式链路失效；改为 `MutationObserver` 采样前不宜据此判定。
+- 本机 Playwright 的 Chromium 缺 `libnspr4` / `libnss3` / `libasound`，且 `sudo` 需密码。补库办法
+  （`apt-get download` + `dpkg-deb -x` + `LD_LIBRARY_PATH`）**不写入仓库、不进 CI**：CI runner 需自备浏览器依赖。
+
 ## [3.7.0] — 2026-11-10 · 「大模型架构深化 + 界面重构」
 
 > 六阶段改造：修复 AI 配置链的静默失败、把散落的 prompt 收拢为资产层、

@@ -30,8 +30,8 @@ await step('徽标=免费AI(免费通道就绪)', async () => {
 await p.evaluate(() => { localStorage.clear(); });
 await p.goto(GAME, { waitUntil: 'domcontentloaded' });
 await p.waitForTimeout(2600);
-await step('开始游戏', async () => { await p.locator('#btn-begin-game').click(); await p.waitForTimeout(600); return p.evaluate(() => !document.querySelector('#narration-container').classList.contains('hidden') || !document.querySelector('#intro-text').classList.contains('hidden')); });
-await step('跳过旁白', async () => { await p.evaluate(() => document.querySelector('#btn-skip-intro')?.click()); await p.waitForTimeout(400); return p.evaluate(() => !!document.querySelector('#btn-start')); });
+await step('开始游戏', async () => { await p.locator('#btn-begin-game').click(); await p.waitForTimeout(600); return p.evaluate(() => !document.querySelector('#narration-container').classList.contains('hidden') && !!document.querySelector('#intro-video')); });
+await step('跳过速报', async () => { await p.evaluate(() => document.querySelector('#btn-skip-intro')?.click()); await p.waitForTimeout(400); return p.evaluate(() => !!document.querySelector('#btn-start')); });
 await step('进入调查', async () => { await p.evaluate(() => document.querySelector('#btn-start')?.click()); await p.waitForTimeout(600); return p.evaluate(() => !document.querySelector('#phase-invest').classList.contains('hidden')); });
 
 // 收集全部物证
@@ -74,6 +74,23 @@ await step('证据对峙条常驻', async () => p.evaluate(() => {
 }));
 
 // 真实 AI 提问(含流式)
+// 流式「证据」用 MutationObserver 记录，而不是轮询采样：
+// 推理模型首个可见 delta 常在 10s+ 才到、之后 200ms 内吐完，.streaming 气泡
+// 生命期远短于任何轮询间隔(slice 0 会整个错过)。此处只装一次观察器，
+// 记录「是否曾经出现过带增量文本的 .bubble.suspect.streaming」。
+await p.evaluate(() => {
+  window.__streamProbe = { seen: 0, maxLen: 0 };
+  const root = document.getElementById('dialog-stream');
+  new MutationObserver(() => {
+    const sb = root && root.querySelector('.bubble.suspect.streaming');
+    if (!sb) return;
+    const len = (sb.textContent || '').length;
+    if (len > 0) {
+      window.__streamProbe.seen += 1;
+      window.__streamProbe.maxLen = Math.max(window.__streamProbe.maxLen, len);
+    }
+  }).observe(root, { childList: true, subtree: true, characterData: true });
+});
 const t0 = Date.now();
 await p.locator('#dialog-input').fill('登记簿上你是20:00到的，不是你说 的八点半。这半小时你在哪？');
 await p.locator('#dialog-input').press('Enter');
@@ -83,9 +100,15 @@ for (let i = 0; i < 40; i++) {
     const sb = document.querySelector('#dialog-stream .bubble.suspect.streaming');
     const typing = document.querySelector('#typing-bubble');
     const sus = [...document.querySelectorAll('#dialog-stream .bubble.suspect')].filter(b => !b.classList.contains('streaming'));
-    return { streaming: sb ? sb.textContent.length : 0, typing: !!typing, done: sus.length, last: sus.length ? sus[sus.length - 1].textContent.slice(0, 60) : null };
+    return {
+      streaming: sb ? sb.textContent.length : 0,
+      probe: window.__streamProbe,
+      typing: !!typing,
+      done: sus.length,
+      last: sus.length ? sus[sus.length - 1].textContent.slice(0, 60) : null,
+    };
   });
-  if (s.streaming > 0) streamed = true;
+  if (s.streaming > 0 || s.probe.seen > 0) streamed = true;
   if (!s.typing && s.done >= 2) { replyText = s.last; break; }
   await p.waitForTimeout(1000);
 }

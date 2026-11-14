@@ -141,7 +141,7 @@ app.py              免费 AI 代理（FastAPI：静态托管 + /api/chat + /api
 requirements.txt    服务端依赖（fastapi / uvicorn / httpx）
 index.html          页面骨架
 css/style.css       暗色侦探风 UI + 雨幕动画 + 动感计分 / 红章徽章
-assets/audio/       开场旁白 MP3
+assets/video/       开场案情速报 MP4（10s，画面自带旁白与字幕）
 js/
   case-data.js      案件数据（物证/嫌疑人/真相/NPC 行动定义；人设四层 voice/defense/core/arc）
   prompts.js        Prompt 资产层（六类系统提示 + 输出契约 + 阶段表演护栏）
@@ -152,7 +152,7 @@ js/
   profiler.js       侦探能力侧写引擎（AI 报告 + 雷达图）
   audio.js          WebAudio 程序化音效
   storage.js        安全存储层（localStorage 异常时降级内存，无痕模式全程可玩）
-tools/              测试与校验脚本（check-syntax 语法/引用/注释配对 · proxy-base-test 180 断言 · contract-test · latency-test · judge-eval · test_proxy…）
+tools/              测试与校验脚本（check-syntax 语法/引用/注释配对 · proxy-base-test 211 断言 · contract-test · latency-test · judge-eval · test_proxy…）
 雨夜画廊-创作手记/   创作手记（含 NPC 决策闭环实测记录）
 ```
 
@@ -311,7 +311,7 @@ node tools/ai-test.mjs --e2e           # 只跑真实浏览器端到端
 
 ## 📄 素材与版权
 
-全部场景与人物为代码绘制的 SVG，音效由 WebAudio 实时合成——**无任何第三方素材**，可自由托管分发。
+场景与人物为代码绘制的 SVG，音效由 WebAudio 实时合成；开场 10 秒案情速报为 AI 生成视频（`assets/video/intro.mp4`）。**无任何第三方素材**，可自由托管分发。
 
 ## 🙏 致谢
 

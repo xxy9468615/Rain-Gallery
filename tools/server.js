@@ -13,6 +13,8 @@ const MIME = {
   '.png': 'image/png',
   '.ico': 'image/x-icon',
   '.mp3': 'audio/mpeg',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
   '.md': 'text/markdown; charset=utf-8',
 };
 
