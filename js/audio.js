@@ -7,7 +7,7 @@
  * - 开场案情速报视频的音量/静音联动（画面自带旁白与字幕，这里只做声音治理）
  * ============================================================ */
 
-import { storage } from './storage.js?v=3.6.0';
+import { storage } from './storage.js?v=3.8.0';
 
 class AudioEngine {
   constructor() {

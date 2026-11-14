@@ -390,8 +390,34 @@ def _build_demo():
 
 demo = _build_demo() if gr is not None else None
 
+class RevalidatingStaticFiles(StaticFiles):
+    """静态托管 + 强制 revalidate 的缓存策略。
+
+    Starlette 默认只发 ETag/Last-Modified，不发 Cache-Control。浏览器于是对
+    js/css 走启发式缓存（(Date - Last-Modified) 的 10%），可以静默复用几十天
+    前的脚本。本仓库的 ?v= 参数常年不变（style.css?v=3.6.0 沿用至今），
+    「改 URL 就失效缓存」这条防线实际上不存在，结果是新旧模块混存：
+    新 game.js + 旧 audio.js → `audio.bindIntroVideo is not a function`
+    → bindEvents 整体未执行 → 点「开始游戏」无反应，且没有可读报错。
+
+    no-cache 表示「每次使用前必须回源校验」，不是「不存」：命中 ETag 时是
+    304 空响应，带宽成本远低于全量重下，4.7 MB 的开场视频也同样受益。
+    视频额外带 Accept-Ranges，保证 iOS/Safari 的渐进加载与拖动重播。
+
+    放在文件名里做版本号也只是缓解，漏改一次就又回到同样的坑；缓存策略
+    才是根治——URL 不再决定内容是否新鲜，内容校验码才决定。
+    """
+
+    async def get_response(self, path, scope):
+        """解析静态文件并在成功响应上补齐 Cache-Control: no-cache（保留 ETag 协商）。"""
+        response = await super().get_response(path, scope)
+        if response.status_code < 400:
+            response.headers.setdefault("Cache-Control", "no-cache")
+        return response
+
+
 # 游戏挂在 /game/（Gradio 占根路径；/api/* 已在 Gradio 挂载前注册，保持可用）
-app.mount("/game", StaticFiles(directory=BASE_DIR, html=True), name="game")
+app.mount("/game", RevalidatingStaticFiles(directory=BASE_DIR, html=True), name="game")
 
 if gr is not None:
     # 统一入口：Gradio 提供根路径 UI + 文档 + 静态资源，原 FastAPI 应用作为宿主

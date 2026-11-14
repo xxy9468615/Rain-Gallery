@@ -42,11 +42,24 @@
 - **切后台/失焦时旁白仍在出声**：`suspendMaster()` 原先复用
   `syncIntroVideoMute()`（写入全局静音，通常为 false），反而把视频解除静音。
   改为 `syncIntroVideoMute(true)` 强制静音，回前台再按全局静音恢复。
+- **静态资源无 Cache-Control，新旧模块混存导致开局点不动**：`/game/` 原先是裸
+  `StaticFiles`，只发 `ETag` / `Last-Modified`，浏览器对 js/css 走启发式缓存，
+  可静默复用数十天前的脚本；而 `?v=` 参数自 6 号起一直是 `3.6.0`，跨多个版本没变，
+  「改 URL 就失效」这条防线实际不存在。真机复现：新 `index.html` + 新 `game.js`
+  配缓存里的旧 `audio.js`（无 `bindIntroVideo`）→ `bindEvents` 抛
+  `TypeError: audio.bindIntroVideo is not a function` → 整段事件绑定未执行 →
+  点「开始游戏」毫无反应，控制台只有一条难读的 `not a function`。
+  两处一起修：`app.py` 换 `RevalidatingStaticFiles`，静态响应显式
+  `Cache-Control: no-cache`（每次都回源校验，ETag 命中走 304，不重复下 4.7 MB 视频）；
+  `js/game.js` 调用前加 `typeof` 能力探测，模块错配时静音联动降级而不是拖垮整页绑定。
+- **资源缓存参数与版本脱节**：`index.html` 与各模块 import 的 `?v=` 仍停在 `3.6.0`，
+  本版已到 `3.8.0`。统一升到 `3.8.0`，并在静态回归里加了对账断言——资源版本号
+  与 `CHANGELOG` 顶部版本不一致即报红，杜绝「代码升了、缓存参数没升」再次静默发生。
 
 ### Verification
 
 - `tools/check-syntax.mjs` 全模块 + 跨模块引用 + 块注释配对通过
-- `tools/proxy-base-test.mjs` 211 条断言全通过（第 12 节开场视频契约 31 条，
+- `tools/proxy-base-test.mjs` 219 条断言全通过（第 12 节开场视频契约 31 条 · 第 13 节缓存新鲜度 8 条，
   含上述三处修复的回归断言与 README 断言数对账）
 - `tools/e2e-real.mjs`（真实 backend :8092 + 真实上游 `gemma-4-31B-it` + Playwright Chromium）
   - 开场链路真机跑通：`开始游戏` → `跳过速报` → `进入调查` → 物证 11/11 → `进入审讯`

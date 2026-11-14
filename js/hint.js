@@ -14,8 +14,8 @@
  *   6. 扣分但不改关系值（第一期不动 applyRel/敌意，避免牵动审讯平衡）
  * ============================================================ */
 
-import { PROMPTS } from './prompts.js?v=3.6.0';
-import { chatCompletion, withTimeout } from './ai-client.js?v=3.6.0';
+import { PROMPTS } from './prompts.js?v=3.8.0';
+import { chatCompletion, withTimeout } from './ai-client.js?v=3.8.0';
 
 /** 一局可求助次数 */
 export const HINT_LIMIT = 3;

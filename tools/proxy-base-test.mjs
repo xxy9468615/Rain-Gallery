@@ -19,6 +19,7 @@
  * 用法：node tools/proxy-base-test.mjs
  * ============================================================ */
 import { readFileSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,7 +59,7 @@ function pythonCmd() {
  * 1. 基址校验矩阵（真跑 js/ai-client.js 的导出函数）
  * ============================================================ */
 section('1 · 代理基址校验矩阵');
-const { validateProxyBase, setProxyBase, getProxyBase } = await import('../js/ai-client.js?v=3.6.0');
+const { validateProxyBase, setProxyBase, getProxyBase } = await import('../js/ai-client.js?v=3.8.0');
 
 const ACCEPT = ['', 'https://h', 'https://h/', 'https://host.example', 'http://127.0.0.1:8092'];
 const REJECT = [
@@ -266,7 +267,7 @@ print(_strip_quotes(sys.argv[1]))
 section('8 · 模型 ID 配置链与流式思维链剥离');
 {
   const { aiSettings, stripThinking, MODEL_OPTIONS, rotateSessionId, proxyState } =
-    await import('../js/ai-client.js?v=3.6.0');
+    await import('../js/ai-client.js?v=3.8.0');
 
   // 8.1 setModel(x) → getModel() === x：任何非空 ID 都是合法模型
   // 分两条腿测，缺一条就漏：
@@ -285,7 +286,7 @@ section('8 · 模型 ID 配置链与流式思维链剥离');
     if (aiSettings.getModel() !== m) { keepOk = false; keepDetail.push(`${m} → ${aiSettings.getModel()}`); }
 
     // 冷启动分支：换一个全新模块实例（相当于刷新页面）
-    const fresh = await import('../js/ai-client.js?v=3.6.0&cold=' + encodeURIComponent(m));
+    const fresh = await import('../js/ai-client.js?v=3.8.0&cold=' + encodeURIComponent(m));
     if (fresh.aiSettings.getModel() !== m) {
       coldOk = false;
       coldDetail.push(`${m} → ${fresh.aiSettings.getModel()}`);
@@ -332,7 +333,7 @@ section('8 · 模型 ID 配置链与流式思维链剥离');
  * ============================================================ */
 section('9 · 求助系统（方向性提示 + 计分惩罚）');
 {
-  const { hintPenalty, hintsLeft, HINT_LIMIT, sanitizeHint } = await import('../js/hint.js?v=3.6.0');
+  const { hintPenalty, hintsLeft, HINT_LIMIT, sanitizeHint } = await import('../js/hint.js?v=3.8.0');
 
   // 9.1 扣分曲线：每次 -2、封顶 -6，脏数据归零不返负
   const penCases = [[0, 0], [1, 2], [2, 4], [3, 6], [4, 6], [-1, 0], [undefined, 0], ['2', 4]];
@@ -348,7 +349,7 @@ section('9 · 求助系统（方向性提示 + 计分惩罚）');
   t(hintsLeft(0) === 3 && hintsLeft(3) === 0 && hintsLeft(9) === 0, '剩余次数不返负');
 
   // 9.3 合规闸：方向性提示放行，代写问句/物证名/结论/引号复述/paraphrase 一律拦
-  const { CASE } = await import('../js/case-data.js?v=3.6.0');
+  const { CASE } = await import('../js/case-data.js?v=3.8.0');
   const sus = CASE.suspects.find((s) => s.id === 'chenmo');
   const known = CASE.evidences.slice(0, 2);
   const badHints = [
@@ -428,7 +429,7 @@ section('11 · 第二轮评审修复回归');
   const gitattr = read('.gitattributes');
   const devSrc = read('tools/dev-server.sh');
   const htmlSrc = read('index.html');
-  const { createStreamSanitizer, withTimeout } = await import('../js/ai-client.js?v=3.6.0');
+  const { createStreamSanitizer, withTimeout } = await import('../js/ai-client.js?v=3.8.0');
 
   // 11.1（Major）流式思维链：跨 chunk 有状态剥离，两处分支都接 sanitizer
   t(/function createStreamSanitizer\(\)/.test(aiSrc), '流式剥离改为跨 chunk 有状态');
@@ -882,6 +883,78 @@ section('12 · 开场案情速报视频契约');
   }
   t(/syncIntroVideoMute\(forceMute\s*=\s*false\)/.test(audioSrc),
     'syncIntroVideoMute 支持强制静音参数');
+}
+
+/* ============================================================
+ * 13. 静态资源的缓存新鲜度契约
+ * ------------------------------------------------------------
+ * 起因是线上真故障：?v= 参数从 6 号起一直是 3.6.0，而 index.html / css / js
+ * 在 11 月 14 号大改。浏览器命中本地缓存后，新 index.html + 新 game.js 配
+ * 旧 audio.js（6154b2b 版，没有 bindIntroVideo）→ TypeError → bindEvents
+ * 整段未执行 → 点「开始游戏」毫无反应，且控制台只有一条难读的 not a function。
+ *
+ * 三条防线必须同时在，缺一条就退化成同一个故障：
+ *   1) 服务端不发启发式缓存：静态响应显式带 Cache-Control: no-cache
+ *   2) 客户端跨模块调用做能力探测：缺方法时降级，而不是让整段绑定崩掉
+ *   3) 版本参数随发布真正失效：?v= 与代码内容挂钩，而不是常年不动
+ * ============================================================ */
+section('13 · 静态资源缓存新鲜度（避免新旧模块混存）');
+{
+  const appPy = read('app.py');
+  const html = read('index.html');
+  const gameSrc = read('js/game.js');
+
+  // 13.1 服务端：/game/ 必须走「强制 revalidate」的静态托管，而不是裸 StaticFiles
+  t(/class RevalidatingStaticFiles\(/.test(appPy), 'app.py 定义了强制 revalidate 的静态类');
+  t(/app\.mount\("\/game",\s*RevalidatingStaticFiles\(/.test(appPy),
+    '/game/ 使用 RevalidatingStaticFiles 挂载（不再裸 StaticFiles）');
+  t(/Cache-Control"\s*,\s*"no-cache"/.test(appPy),
+    '静态响应显式声明 Cache-Control: no-cache');
+  // no-cache 不是"不缓存"，是"每次使用前校验"：ETag 命中仍走 304，别被误改成 no-store
+  t(!/Cache-Control"\s*,\s*"no-store"/.test(appPy),
+    '未误用 no-store（会彻底禁用缓存并让视频每次全量重下）');
+  t(/async def get_response\(self,\s*path,\s*scope\)/.test(appPy),
+    'get_response 签名与当前 Starlette 一致（path, scope）');
+
+  // 13.2 客户端：跨模块调用先做能力探测，缺方法时降级而不是抛异常打断绑定
+  t(/typeof audio\.bindIntroVideo === 'function'/.test(gameSrc),
+    'game.js 调用 bindIntroVideo 前做能力探测（旧 audio.js 不会炸 bindEvents）');
+
+  // 13.3 缓存参数：静态图里所有 js/css 引用（index.html 的标签 + 各模块内部
+  //      import 的相对路径）都必须带 ?v=，且与 CHANGELOG 顶部版本一致。
+  //     只查 index.html 会有盲区——6 个模块里的 17 处 import 全在它视野外，
+  //     而模块间错版本恰恰是新旧代码混存的高发位置。
+  {
+    const topVer = (read('CHANGELOG.md').match(/## \[(\d+\.\d+\.\d+)\]/) || [])[1];
+    // 动态枚举 js/ 下的全部模块：新增文件自动纳入，不靠手写清单漏测
+    const SHIPPED_JS = (await readdir(resolve(ROOT, 'js')))
+      .filter((f) => f.endsWith('.js')).sort().map((f) => `js/${f}`);
+    const refs = [];   // {file, spec}
+    for (const m of html.matchAll(/(?:src|href)="((?:js|css)\/[^"]+)"/g)) {
+      refs.push({ file: 'index.html', spec: m[1] });
+    }
+    for (const f of SHIPPED_JS) {
+      const src = read(f);
+      for (const m of src.matchAll(/from\s+'(\.[^']+)'|import\s*\(\s*'(\.[^']+)'/g)) {
+        const spec = m[1] || m[2];
+        if (spec && /\.(js|css)(\?|$)/.test(spec)) refs.push({ file: f, spec });
+      }
+    }
+
+    const missing = refs.filter((r) => !/[?&]v=/.test(r.spec))
+      .map((r) => `${r.file} → ${r.spec}`);
+    t(refs.length > 0 && missing.length === 0,
+      `全部 ${refs.length} 处 js/css 引用均带 ?v= 缓存参数（含模块内 import）`,
+      missing.join(' · '));
+
+    const stale = refs.filter((r) => {
+      const v = (r.spec.match(/[?&]v=([\d.]+)/) || [])[1];
+      return v && topVer && v !== topVer;
+    }).map((r) => `${r.file} → ${r.spec}（期望 ${topVer}）`);
+    t(stale.length === 0,
+      `所有 ?v= 与当前版本 ${topVer} 一致（避免漏升缓存参数）`,
+      stale.join(' · '));
+  }
 }
 
 /* ============================================================
