@@ -470,7 +470,7 @@ class RevalidatingStaticFiles(StaticFiles):
             raise HTTPException(status_code=404)
 
         if stat_result and stat.S_ISREG(stat_result.st_mode):
-            return self._file_response(full_path, stat_result, scope)
+            return await self._file_response(full_path, stat_result, scope)
         if stat_result and stat.S_ISDIR(stat_result.st_mode) and self.html:
             index_path = os.path.join(path, "index.html")
             full_path, stat_result = await anyio.to_thread.run_sync(self.lookup_path, index_path)
@@ -479,18 +479,22 @@ class RevalidatingStaticFiles(StaticFiles):
                     url = URL(scope=scope)
                     url = url.replace(path=url.path + "/")
                     return RedirectResponse(url=url)
-                return self._file_response(full_path, stat_result, scope)
+                return await self._file_response(full_path, stat_result, scope)
         if self.html:
             full_path, stat_result = await anyio.to_thread.run_sync(self.lookup_path, "404.html")
             if stat_result and stat.S_ISREG(stat_result.st_mode):
                 return FileResponse(full_path, stat_result=stat_result, status_code=404)
         raise HTTPException(status_code=404)
 
-    def _file_response(self, full_path, stat_result, scope) -> Response:
-        """内容 ETag + no-cache；先判条件请求，再决定 304 还是 200。"""
+    async def _file_response(self, full_path, stat_result, scope) -> Response:
+        """内容 ETag + no-cache；先判条件请求，再决定 304 还是 200。
+
+        ETag 要读文件并算哈希，是同步 I/O：放进线程池执行，避免阻塞
+        事件循环（开场视频 4.7 MB，慢盘下同步读会把同进程其他请求一起拖住）。
+        """
         request_headers = Headers(scope=scope)
         response = FileResponse(full_path, stat_result=stat_result)
-        response.headers["etag"] = self._etag_for(full_path)
+        response.headers["etag"] = await anyio.to_thread.run_sync(self._etag_for, full_path)
         response.headers.setdefault("Cache-Control", "no-cache")
         if self.is_not_modified(response.headers, request_headers):
             return NotModifiedResponse(response.headers)

@@ -17,14 +17,30 @@ import os
 #: 退化为 mtime+size 版本。当前游戏素材（含 4.7 MB 开场视频）均小于它。
 HASH_CONTENT_MAX_BYTES = 8 * 1024 * 1024
 
+#: (路径, mtime_ns, size) → ETag 的结果缓存。
+#: 浏览器带 Cache-Control: no-cache 时**每次页面加载都会回源校验**，
+#: 若每次都重读 4.7 MB 视频算 SHA-256，代价过高；用 stat 指纹命中缓存，
+#: 文件真被改写（mtime/size 变）时自然失效。
+_ETAG_CACHE = {}
+_ETAG_CACHE_LIMIT = 512
+
 
 def content_etag(full_path, max_bytes=HASH_CONTENT_MAX_BYTES) -> str:
     """按文件内容生成强 ETag；超过 max_bytes 时退化为 mtime+size 版本。
 
     返回带双引号的强校验器（如 ``"a1b2…"``），可直接用于 If-None-Match 比较。
     同一内容必得同一 ETag；mtime 变化但内容不变时 ETag 保持不变（避免无谓重传）。
+
+    读取与哈希是**同步 I/O**：在 async 请求路径里调用时必须放进线程
+    （``anyio.to_thread.run_sync``），否则会阻塞事件循环。
+    命中 _ETAG_CACHE 时只做一次 os.stat，不再读文件。
     """
     st = os.stat(full_path)
+    key = (os.path.abspath(full_path), st.st_mtime_ns, st.st_size)
+    cached = _ETAG_CACHE.get(key)
+    if cached is not None:
+        return cached
+
     if st.st_size <= max_bytes:
         h = hashlib.sha256()
         with open(full_path, "rb") as f:
@@ -33,4 +49,10 @@ def content_etag(full_path, max_bytes=HASH_CONTENT_MAX_BYTES) -> str:
         base = f"content-{st.st_size}-{h.hexdigest()}"
     else:
         base = f"meta-{st.st_mtime}-{st.st_size}"
-    return '"' + hashlib.sha256(base.encode()).hexdigest()[:32] + '"'
+    etag = '"' + hashlib.sha256(base.encode()).hexdigest()[:32] + '"'
+
+    # 简单的容量上限：条目只增不减会随部署次数缓慢增长（服务重启即清零）
+    if len(_ETAG_CACHE) >= _ETAG_CACHE_LIMIT:
+        _ETAG_CACHE.clear()
+    _ETAG_CACHE[key] = etag
+    return etag

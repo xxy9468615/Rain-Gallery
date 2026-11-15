@@ -70,7 +70,7 @@
 ### Verification
 
 - `tools/check-syntax.mjs` 全模块 + 跨模块引用 + 块注释配对通过
-- `tools/proxy-base-test.mjs` 225 条断言全通过（第 12 节开场视频契约 31 条 · 第 13 节缓存新鲜度 14 条，
+- `tools/proxy-base-test.mjs` 226 条断言全通过（第 12 节开场视频契约 31 条 · 第 13 节缓存新鲜度 15 条，
   含上述三处修复的回归断言与 README 断言数对账）
 - `tools/e2e-real.mjs`（真实 backend :8092 + 真实上游 `gemma-4-31B-it` + Playwright Chromium）
   - 开场链路真机跑通：`开始游戏` → `跳过速报` → `进入调查` → 物证 11/11 → `进入审讯`

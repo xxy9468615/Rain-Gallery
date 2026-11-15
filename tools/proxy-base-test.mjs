@@ -967,7 +967,7 @@ section('13 · 静态资源缓存新鲜度（避免新旧模块混存）');
   }
   {
     // 顺序即语义：先判 If-None-Match 并 return，才允许落到 super()（IMS 分支）
-    const fn = (appPy.match(/def is_not_modified\(self,[\s\S]*?\n    def /) || [''])[0];
+    const fn = (appPy.match(/def is_not_modified\(self,[\s\S]*?\n\n    (?:async )?def /) || [''])[0];
     const iInm = fn.indexOf('if_none_match is not None');
     const iRet = fn.indexOf('return "*" in tags');
     const iSuper = fn.indexOf('return super().is_not_modified');
@@ -976,9 +976,15 @@ section('13 · 静态资源缓存新鲜度（避免新旧模块混存）');
   }
   t(/def is_not_modified\(self,\s*response_headers,\s*request_headers\)/.test(appPy),
     '重写了 is_not_modified（不依赖框架版本内部实现）');
-  t(/self\.is_not_modified\(response\.headers, request_headers\)/.test(appPy)
-    && /response\.headers\["etag"\] = self\._etag_for\(full_path\)/.test(appPy),
-    '条件判定前已把内容 ETag 写入响应头（顺序决定 304 是否正确）');
+  {
+    // 顺序即正确性：内容 ETag 必须在 is_not_modified() 之前写入响应头，
+    // 否则 304 判定用的是父类那个「不含内容」的 ETag。
+    const iSet = appPy.indexOf('response.headers["etag"]');
+    const iCheck = appPy.indexOf('self.is_not_modified(response.headers, request_headers)');
+    t(iSet >= 0 && iCheck > iSet
+      && /response\.headers\["etag"\] = await anyio\.to_thread\.run_sync\(self\._etag_for/.test(appPy),
+      '条件判定前已写入内容 ETag，且哈希在线程池执行（不阻塞事件循环）');
+  }
   // 父类语义必须原样保留，否则会顺手改坏 405/401/404/目录重定向
   t(/status_code=405/.test(appPy) && /status_code=401/.test(appPy)
     && /RedirectResponse\(url=url\)/.test(appPy),
@@ -993,15 +999,39 @@ section('13 · 静态资源缓存新鲜度（避免新旧模块混存）');
     // 动态枚举 js/ 下的全部模块：新增文件自动纳入，不靠手写清单漏测
     const SHIPPED_JS = (await readdir(resolve(ROOT, 'js')))
       .filter((f) => f.endsWith('.js')).sort().map((f) => `js/${f}`);
+    // 导入枚举必须覆盖四种合法形态，否则漏掉的引用会被当成「不存在」
+    // 而静默通过（CodeRabbit 抓到）：
+    //   import './a.js';            // 副作用导入
+    //   import "./a.js";            // 双引号
+    //   import { x } from './a.js'; // 具名/默认导入
+    //   await import('./a.js');     // 动态导入
+    const listModuleRefs = (src) => {
+      const out = [];
+      for (const m of src.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(["'])([^"']+)\1/g)) {
+        if (m[2].startsWith('.')) out.push(m[2]);
+      }
+      return out;
+    };
+    // 自测：以上四种形态必须全部被枚举到（防止正则退化成只看 from）
+    {
+      const sample = [
+        "import './side-effect.js';",
+        'import "./double-quoted.js";',
+        "import { x } from './named.js';",
+        'import y from "./default.js";',
+        "const z = await import('./dynamic.js');",
+      ].join('\n');
+      const got = listModuleRefs(sample);
+      t(got.length === 5, '导入枚举覆盖副作用/单双引号/静态/动态四种形态', got.join(' · '));
+    }
+
     const refs = [];   // {file, spec}
     for (const m of html.matchAll(/(?:src|href)="((?:js|css)\/[^"]+)"/g)) {
       refs.push({ file: 'index.html', spec: m[1] });
     }
     for (const f of SHIPPED_JS) {
-      const src = read(f);
-      for (const m of src.matchAll(/from\s+'(\.[^']+)'|import\s*\(\s*'(\.[^']+)'/g)) {
-        const spec = m[1] || m[2];
-        if (spec && /\.(js|css)(\?|$)/.test(spec)) refs.push({ file: f, spec });
+      for (const spec of listModuleRefs(read(f))) {
+        if (/\.(js|css)(\?|$)/.test(spec)) refs.push({ file: f, spec });
       }
     }
 
