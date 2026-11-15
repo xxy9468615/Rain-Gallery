@@ -949,9 +949,16 @@ section('13 · 静态资源缓存新鲜度（避免新旧模块混存）');
         'ea2 = content_etag(a)',
         // 强校验器必须是带引号的合法 ETag 形态
         'ok_shape = ea.startswith(chr(34)) and ea.endswith(chr(34)) and len(ea) > 20',
+        // 部署工具的极限场景：同大小改写内容后把 mtime 回拨到原值
+        // （rsync -t / tar -p 会这样做）。缓存键若只看 mtime+size，
+        // 这里会命中旧 ETag，客户端拿到 304 继续用错的旧脚本。
+        'open(a, "wb").write(b"CCCC")',
+        'os.utime(a, (1000000000, 1000000000))',
+        'ea3 = content_etag(a)',
         'print("DIFF" if ea != eb else "SAME",',
         '      "STABLE" if ea == ea2 else "UNSTABLE",',
-        '      "SHAPE" if ok_shape else "BADSHAPE")',
+        '      "SHAPE" if ok_shape else "BADSHAPE",',
+        '      "MTIME_RESTORED" if ea3 != ea else "MTIME_CACHE_STALE")',
       ].join('\n');
       let out = '';
       try {
@@ -961,8 +968,8 @@ section('13 · 静态资源缓存新鲜度（避免新旧模块混存）');
       } catch (e) {
         out = 'ERR:' + String((e && (e.stderr || e.message)) || e).split('\n').slice(-1)[0];
       }
-      t(out.startsWith('DIFF STABLE SHAPE'),
-        '内容不同 → ETag 不同；仅 mtime 变 → ETag 稳定；形态合法（防内容陈旧 304）', out);
+      t(out.startsWith('DIFF STABLE SHAPE MTIME_RESTORED'),
+        '内容不同 → ETag 不同；仅 mtime 变 → 稳定；mtime 回拨也失效；形态合法', out);
     }
   }
   {

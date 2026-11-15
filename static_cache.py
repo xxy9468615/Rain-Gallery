@@ -17,10 +17,14 @@ import os
 #: 退化为 mtime+size 版本。当前游戏素材（含 4.7 MB 开场视频）均小于它。
 HASH_CONTENT_MAX_BYTES = 8 * 1024 * 1024
 
-#: (路径, mtime_ns, size) → ETag 的结果缓存。
+#: (路径, mtime_ns, ctime_ns, size, inode) → ETag 的结果缓存。
 #: 浏览器带 Cache-Control: no-cache 时**每次页面加载都会回源校验**，
-#: 若每次都重读 4.7 MB 视频算 SHA-256，代价过高；用 stat 指纹命中缓存，
-#: 文件真被改写（mtime/size 变）时自然失效。
+#: 若每次都重读 4.7 MB 视频算 SHA-256，代价过高；用 stat 指纹命中缓存。
+#:
+#: 指纹**不能只用 mtime+size**：部署工具（rsync -t / tar -p / 镜像层）
+#: 会保留 mtime，恰好可能造成「内容变了、mtime 与大小都没变」。ctime 由
+#: 内核在写入/改属性时更新且无法由用户态回拨，inode 可识别整文件替换，
+#: 两者一起才能覆盖这种场景（CodeRabbit 抓到）。
 _ETAG_CACHE = {}
 _ETAG_CACHE_LIMIT = 512
 
@@ -36,7 +40,13 @@ def content_etag(full_path, max_bytes=HASH_CONTENT_MAX_BYTES) -> str:
     命中 _ETAG_CACHE 时只做一次 os.stat，不再读文件。
     """
     st = os.stat(full_path)
-    key = (os.path.abspath(full_path), st.st_mtime_ns, st.st_size)
+    key = (
+        os.path.abspath(full_path),
+        st.st_mtime_ns,
+        getattr(st, "st_ctime_ns", int(st.st_ctime * 1e9)),
+        st.st_size,
+        getattr(st, "st_ino", 0),
+    )
     cached = _ETAG_CACHE.get(key)
     if cached is not None:
         return cached
