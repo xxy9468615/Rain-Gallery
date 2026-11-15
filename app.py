@@ -500,6 +500,25 @@ class RevalidatingStaticFiles(StaticFiles):
             return NotModifiedResponse(response.headers)
         return response
 
+    def _should_use_range(self, http_if_range, *args, **kwargs) -> bool:
+        """If-Range 必须与本次**实际发出**的校验器比较（RFC 7233 §3.2）。
+
+        父类实现随 Starlette 版本变化：0.40 的 `_should_use_range` 是
+        classmethod，会拿 stat_result 重新用 mtime+size 生成 ETag，读不到
+        这里覆盖的内容 ETag。后果是客户端带着内容 ETag 请求续传时被判为
+        不匹配，服务端退回完整 200，视频拖动/断点续传退化成全量下载。
+        requirements.txt 只锁 `fastapi>=0.110`，该版本组合是可能出现的。
+
+        这里统一读 self.headers，并用 *args 兼容父类的两种调用形态
+        （旧版会多传一个 stat_result，忽略即可）。
+        """
+        if not http_if_range:
+            return False
+        return (
+            http_if_range == self.headers.get("etag")
+            or http_if_range == self.headers.get("last-modified")
+        )
+
 
 # 游戏挂在 /game/（Gradio 占根路径；/api/* 已在 Gradio 挂载前注册，保持可用）
 app.mount("/game", RevalidatingStaticFiles(directory=BASE_DIR, html=True), name="game")

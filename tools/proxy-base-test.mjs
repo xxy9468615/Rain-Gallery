@@ -1002,6 +1002,12 @@ section('13 · 静态资源缓存新鲜度（避免新旧模块混存）');
       && /response\.headers\["etag"\] = await anyio\.to_thread\.run_sync\(self\._etag_for/.test(appPy),
       '条件判定前已写入内容 ETag，且哈希在线程池执行（不阻塞事件循环）');
   }
+  // If-Range 必须与「实际发出」的 ETag 比较。Starlette 0.40 的实现是
+  // classmethod，会从 stat_result 重新生成 mtime+size ETag，读不到我们
+  // 覆盖的内容 ETag —— 续传会退化成全量下载，因此必须自己覆写。
+  t(/def _should_use_range\(self,\s*http_if_range/.test(appPy)
+    && /http_if_range == self\.headers\.get\("etag"\)/.test(appPy),
+    'If-Range 与响应头中的内容 ETag 比较（不依赖 Starlette 版本内部实现）');
   // 父类语义必须原样保留，否则会顺手改坏 405/401/404/目录重定向
   t(/status_code=405/.test(appPy) && /status_code=401/.test(appPy)
     && /RedirectResponse\(url=url\)/.test(appPy),
