@@ -40,6 +40,8 @@ from starlette.datastructures import Headers, URL
 from starlette.responses import FileResponse, Response
 from starlette.staticfiles import NotModifiedResponse
 
+from static_cache import content_etag
+
 # ---------------- 配置 ----------------
 # 全部来自环境变量 / 创空间 Secret，代码零硬编码——换上游服务商、换模型只改环境变量。
 # 部署时的最小配置：RG_PROXY_TOKEN + RG_PROXY_API_BASE + RG_PROXY_MODEL 三项。
@@ -431,21 +433,12 @@ class RevalidatingStaticFiles(StaticFiles):
     """
 
     #: 多大的文件才值得算内容哈希；超过则退化为 mtime+size 版本。
-    #: 当前素材（含 4.7 MB 开场视频）均在此阈值以下，走内容哈希。
+    #: 实现见 static_cache.py（只依赖标准库，可在零依赖环境做行为测试）。
     HASH_CONTENT_MAX_BYTES = 8 * 1024 * 1024
 
     def _etag_for(self, full_path) -> str:
         """按文件内容生成强 ETag；超出阈值时退化为 mtime+size 版本。"""
-        st = os.stat(full_path)
-        if st.st_size <= self.HASH_CONTENT_MAX_BYTES:
-            h = hashlib.sha256()
-            with open(full_path, "rb") as f:
-                for chunk in iter(lambda: f.read(256 * 1024), b""):
-                    h.update(chunk)
-            base = f"content-{st.st_size}-{h.hexdigest()}"
-        else:
-            base = f"meta-{st.st_mtime}-{st.st_size}"
-        return '"' + hashlib.sha256(base.encode()).hexdigest()[:32] + '"'
+        return content_etag(full_path, self.HASH_CONTENT_MAX_BYTES)
 
     def is_not_modified(self, response_headers, request_headers) -> bool:
         """RFC 7232 §3.3：请求带 If-None-Match 时只看 ETag，忽略 If-Modified-Since。"""

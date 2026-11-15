@@ -924,8 +924,9 @@ section('13 · 静态资源缓存新鲜度（避免新旧模块混存）');
   //      且不同版本对两个校验器的优先级不一致，因此必须自己实现：
   //        a) ETag 基于文件内容
   //        b) 请求带 If-None-Match 时忽略 If-Modified-Since（RFC 7232 §3.3）
-  t(/_etag_for\(/.test(appPy) && /hashlib\.sha256\(\)/.test(appPy),
-    'ETag 由文件内容哈希生成（不再沿用 mtime+size）');
+  t(/_etag_for\(/.test(appPy) && /content_etag\(/.test(appPy)
+    && /hashlib\.sha256\(\)/.test(read('static_cache.py')),
+    'ETag 由文件内容哈希生成（独立模块 static_cache.py，不再沿用 mtime+size）');
   {
     // 行为级验证，而不是只 grep 源码：构造两个「mtime 与大小完全相同、
     // 内容不同」的文件，直接调用真实实现的 _etag_for。Starlette 原版
@@ -935,18 +936,22 @@ section('13 · 静态资源缓存新鲜度（避免新旧模块混存）');
       console.log('  \x1b[33m⚠\x1b[0m 内容 ETag 行为验证跳过（python 不可用）');
     } else {
       const script = [
-        'import importlib.util, os, tempfile',
-        'spec = importlib.util.spec_from_file_location("rg_app", "app.py")',
-        'm = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)',
-        'inst = m.RevalidatingStaticFiles(directory=".")',
+        'import os, sys, tempfile',
+        'sys.path.insert(0, os.getcwd())',
+        'from static_cache import content_etag',   // 只依赖标准库
         'd = tempfile.mkdtemp()',
         'a = os.path.join(d, "a.js"); b = os.path.join(d, "b.js")',
         'open(a, "wb").write(b"AAAA"); open(b, "wb").write(b"BBBB")',
         'os.utime(a, (1000000000, 1000000000)); os.utime(b, (1000000000, 1000000000))',
-        'ea, eb = inst._etag_for(a), inst._etag_for(b)',
-        'os.utime(a, (1000000000, 1000000000))',
-        'ea2 = inst._etag_for(a)',
-        'print("DIFF" if ea != eb else "SAME", "STABLE" if ea == ea2 else "UNSTABLE")',
+        'ea, eb = content_etag(a), content_etag(b)',
+        // 内容不变、仅 mtime 变化 → ETag 必须保持不变（避免无谓重传）
+        'os.utime(a, (1100000000, 1100000000))',
+        'ea2 = content_etag(a)',
+        // 强校验器必须是带引号的合法 ETag 形态
+        'ok_shape = ea.startswith(chr(34)) and ea.endswith(chr(34)) and len(ea) > 20',
+        'print("DIFF" if ea != eb else "SAME",',
+        '      "STABLE" if ea == ea2 else "UNSTABLE",',
+        '      "SHAPE" if ok_shape else "BADSHAPE")',
       ].join('\n');
       let out = '';
       try {
@@ -956,8 +961,8 @@ section('13 · 静态资源缓存新鲜度（避免新旧模块混存）');
       } catch (e) {
         out = 'ERR:' + String((e && (e.stderr || e.message)) || e).split('\n').slice(-1)[0];
       }
-      t(out.startsWith('DIFF STABLE'),
-        '同 mtime/同大小、内容不同 → ETag 必须不同且稳定（防内容陈旧 304）', out);
+      t(out.startsWith('DIFF STABLE SHAPE'),
+        '内容不同 → ETag 不同；仅 mtime 变 → ETag 稳定；形态合法（防内容陈旧 304）', out);
     }
   }
   {
