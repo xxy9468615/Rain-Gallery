@@ -963,12 +963,21 @@ section('13 · 静态资源缓存新鲜度（避免新旧模块混存）');
         'ebig2 = content_etag(big, max_bytes=1)',
         // 缓存键必须区分策略：同一文件两种 max_bytes 不应串用结果
         'ebig3 = content_etag(big, max_bytes=10**9)',
+        // If-None-Match 解析：引号内的逗号/星号是标签内容，不是分隔符与通配符
+        'from static_cache import parse_etags',
+        'p1 = parse_etags(\'"a,*,b"\')',
+        'p2 = parse_etags(\'*, "x"\')',
+        'p3 = parse_etags(\'"x", W/"y"\')',
+        'parse_ok = (p1 == [\'"a,*,b"\'] and "*" not in p1',
+        '            and "*" in p2 and p2[-1] == \'"x"\'',
+        '            and p3 == [\'"x"\', \'W/"y"\'])',
         'print("DIFF" if ea != eb else "SAME",',
         '      "STABLE" if ea == ea2 else "UNSTABLE",',
         '      "SHAPE" if ok_shape else "BADSHAPE",',
         '      "MTIME_RESTORED" if ea3 != ea else "MTIME_CACHE_STALE",',
         '      "FALLBACK_OK" if ebig1 != ebig2 else "FALLBACK_STALE",',
-        '      "POLICY_SEPARATED" if ebig2 != ebig3 else "POLICY_MIXED")',
+        '      "POLICY_SEPARATED" if ebig2 != ebig3 else "POLICY_MIXED",',
+        '      "PARSE_OK" if parse_ok else "PARSE_BAD")',
       ].join('\n');
       let out = '';
       try {
@@ -978,8 +987,8 @@ section('13 · 静态资源缓存新鲜度（避免新旧模块混存）');
       } catch (e) {
         out = 'ERR:' + String((e && (e.stderr || e.message)) || e).split('\n').slice(-1)[0];
       }
-      t(out.startsWith('DIFF STABLE SHAPE MTIME_RESTORED FALLBACK_OK POLICY_SEPARATED'),
-        'ETag 语义完整：内容敏感、mtime 稳定、回拨失效、退化分支失效、策略不串用', out);
+      t(out.startsWith('DIFF STABLE SHAPE MTIME_RESTORED FALLBACK_OK POLICY_SEPARATED PARSE_OK'),
+        'ETag 语义完整：内容敏感/mtime 稳定/回拨失效/退化失效/策略隔离/If-None-Match 解析正确', out);
     }
   }
   {
@@ -996,10 +1005,13 @@ section('13 · 静态资源缓存新鲜度（避免新旧模块混存）');
   {
     // 顺序即正确性：内容 ETag 必须在 is_not_modified() 之前写入响应头，
     // 否则 304 判定用的是父类那个「不含内容」的 ETag。
-    const iSet = appPy.indexOf('response.headers["etag"]');
-    const iCheck = appPy.indexOf('self.is_not_modified(response.headers, request_headers)');
-    t(iSet >= 0 && iCheck > iSet
-      && /response\.headers\["etag"\] = await anyio\.to_thread\.run_sync\(self\._etag_for/.test(appPy),
+    // 断言限定在 _file_response 函数体内，避免全文件 indexOf 命中注释/别处调用
+    // 而误判顺序（CodeRabbit 建议）。
+    const body = (appPy.match(/async def _file_response\([\s\S]*?\n    (?:async )?def /) || [''])[0];
+    const iSet = body.indexOf('response.headers["etag"]');
+    const iCheck = body.indexOf('self.is_not_modified(response.headers, request_headers)');
+    t(body.length > 0 && iSet >= 0 && iCheck > iSet
+      && /response\.headers\["etag"\] = await anyio\.to_thread\.run_sync\(self\._etag_for/.test(body),
       '条件判定前已写入内容 ETag，且哈希在线程池执行（不阻塞事件循环）');
   }
   // If-Range 必须与「实际发出」的 ETag 比较。Starlette 0.40 的实现是

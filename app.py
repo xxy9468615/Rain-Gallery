@@ -40,7 +40,7 @@ from starlette.datastructures import Headers, URL
 from starlette.responses import FileResponse, Response
 from starlette.staticfiles import NotModifiedResponse
 
-from static_cache import content_etag
+from static_cache import content_etag, parse_etags
 
 # ---------------- 配置 ----------------
 # 全部来自环境变量 / 创空间 Secret，代码零硬编码——换上游服务商、换模型只改环境变量。
@@ -444,7 +444,7 @@ class RevalidatingStaticFiles(StaticFiles):
         """RFC 7232 §3.3：请求带 If-None-Match 时只看 ETag，忽略 If-Modified-Since。"""
         if_none_match = request_headers.get("if-none-match")
         if if_none_match is not None:
-            tags = [t.strip() for t in if_none_match.split(",")]
+            tags = parse_etags(if_none_match)
             etag = response_headers.get("etag")
             if not etag:
                 return False

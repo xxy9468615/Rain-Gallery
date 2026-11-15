@@ -29,6 +29,33 @@ _ETAG_CACHE = {}
 _ETAG_CACHE_LIMIT = 512
 
 
+def parse_etags(value) -> list:
+    """按 RFC 9110 解析 If-None-Match：引号内的逗号不是分隔符。
+
+    `"a,*,b"` 是**一个**合法实体标签（标签内允许逗号与星号）；直接
+    ``value.split(",")`` 会把它切成三段，其中裸 ``*`` 被误判为通配符，
+    导致对不匹配的请求错误返回 304。这里按引号状态切分，保留引号本身。
+    """
+    tags = []
+    buf = []
+    in_quotes = False
+    for ch in value or "":
+        if ch == '"':
+            in_quotes = not in_quotes
+            buf.append(ch)
+        elif ch == "," and not in_quotes:
+            piece = "".join(buf).strip()
+            if piece:
+                tags.append(piece)
+            buf = []
+        else:
+            buf.append(ch)
+    piece = "".join(buf).strip()
+    if piece:
+        tags.append(piece)
+    return tags
+
+
 def content_etag(full_path, max_bytes=HASH_CONTENT_MAX_BYTES) -> str:
     """按文件内容生成强 ETag；超过 max_bytes 时退化为「元数据指纹」版本。
 
