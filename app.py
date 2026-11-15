@@ -21,17 +21,26 @@
 
  运行：python app.py（默认监听 0.0.0.0:7860，创空间 Gradio SDK 兼容）
 ============================================================"""
+import errno
+import hashlib
 import os
+import stat
 import time
 from datetime import date
 from urllib.parse import urlparse
 
+import anyio
 import httpx
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import Headers, URL
+from starlette.responses import FileResponse, Response
+from starlette.staticfiles import NotModifiedResponse
+
+from static_cache import content_etag, parse_etags
 
 # ---------------- 配置 ----------------
 # 全部来自环境变量 / 创空间 Secret，代码零硬编码——换上游服务商、换模型只改环境变量。
@@ -390,8 +399,129 @@ def _build_demo():
 
 demo = _build_demo() if gr is not None else None
 
+class RevalidatingStaticFiles(StaticFiles):
+    """静态托管 + 强制 revalidate 的缓存策略。
+
+    Starlette 默认只发 ETag/Last-Modified，不发 Cache-Control。浏览器于是对
+    js/css 走启发式缓存（(Date - Last-Modified) 的 10%），可以静默复用几十天
+    前的脚本。本仓库的 ?v= 参数常年不变（style.css?v=3.6.0 沿用至今），
+    「改 URL 就失效缓存」这条防线实际上不存在，结果是新旧模块混存：
+    新 game.js + 旧 audio.js → `audio.bindIntroVideo is not a function`
+    → bindEvents 整体未执行 → 点「开始游戏」无反应，且没有可读报错。
+
+    no-cache 表示「每次使用前必须回源校验」，不是「不存」：命中 ETag 时是
+    304 空响应，带宽成本远低于全量重下，4.7 MB 的开场视频也同样受益。
+    视频额外带 Accept-Ranges，保证 iOS/Safari 的渐进加载与拖动重播。
+
+    放在文件名里做版本号也只是缓解，漏改一次就又回到同样的坑；缓存策略
+    才是根治——URL 不再决定内容是否新鲜，内容校验码才决定。
+
+    为什么不能直接沿用 Starlette 的 ETag 与 is_not_modified
+    ------------------------------------------------------
+    1) Starlette 的 ETag 是 md5(st_mtime + "-" + st_size)，**不含内容**。
+       同一秒内同样大小的两次改写会算出同一个 ETag（本地已复现），
+       而「内容变了但校验码没变」正是本类故障的根因，不能留。
+    2) 不同 Starlette 版本对两个校验器的优先级处理不一致：有的在
+       If-None-Match 不命中后继续退到 If-Modified-Since，而 Last-Modified
+       只到秒精度，就可能对已变更文件错误地回 304。requirements.txt 只锁
+       fastapi>=，starlette 实际版本随依赖漂移，不能把正确性押在框架内部
+       实现上。RFC 7232 §3.3 明确要求：请求带 If-None-Match 时必须忽略
+       If-Modified-Since。
+
+    因此这里自己实现校验器：ETag 取文件内容的强哈希，两个校验器的优先级
+    由本类显式决定，不受 Starlette 版本影响。
+    """
+
+    #: 多大的文件才值得算内容哈希；超过则退化为 mtime+size 版本。
+    #: 实现见 static_cache.py（只依赖标准库，可在零依赖环境做行为测试）。
+    HASH_CONTENT_MAX_BYTES = 8 * 1024 * 1024
+
+    def _etag_for(self, full_path) -> str:
+        """按文件内容生成强 ETag；超出阈值时退化为 mtime+size 版本。"""
+        return content_etag(full_path, self.HASH_CONTENT_MAX_BYTES)
+
+    def is_not_modified(self, response_headers, request_headers) -> bool:
+        """RFC 7232 §3.3：请求带 If-None-Match 时只看 ETag，忽略 If-Modified-Since。"""
+        if_none_match = request_headers.get("if-none-match")
+        if if_none_match is not None:
+            tags = parse_etags(if_none_match)
+            etag = response_headers.get("etag")
+            if not etag:
+                return False
+            # "*" 表示任意当前表示都算未修改；弱校验器 W/ 前缀需先剥掉再比
+            return "*" in tags or etag in tags or etag in [t.removeprefix("W/") for t in tags]
+        return super().is_not_modified(response_headers, request_headers)
+
+    async def get_response(self, path, scope):
+        """解析静态文件；命中条件请求时返回 304，否则补 Cache-Control 后返回 200。"""
+        method = scope.get("method")
+        if method not in ("GET", "HEAD"):
+            raise HTTPException(status_code=405)
+
+        try:
+            full_path, stat_result = await anyio.to_thread.run_sync(self.lookup_path, path)
+        except PermissionError:
+            raise HTTPException(status_code=401)
+        except OSError as exc:
+            if exc.errno == errno.ENAMETOOLONG:
+                raise HTTPException(status_code=404)
+            raise exc
+        except ValueError:
+            raise HTTPException(status_code=404)
+
+        if stat_result and stat.S_ISREG(stat_result.st_mode):
+            return await self._file_response(full_path, stat_result, scope)
+        if stat_result and stat.S_ISDIR(stat_result.st_mode) and self.html:
+            index_path = os.path.join(path, "index.html")
+            full_path, stat_result = await anyio.to_thread.run_sync(self.lookup_path, index_path)
+            if stat_result is not None and stat.S_ISREG(stat_result.st_mode):
+                if not scope["path"].endswith("/"):
+                    url = URL(scope=scope)
+                    url = url.replace(path=url.path + "/")
+                    return RedirectResponse(url=url)
+                return await self._file_response(full_path, stat_result, scope)
+        if self.html:
+            full_path, stat_result = await anyio.to_thread.run_sync(self.lookup_path, "404.html")
+            if stat_result and stat.S_ISREG(stat_result.st_mode):
+                return FileResponse(full_path, stat_result=stat_result, status_code=404)
+        raise HTTPException(status_code=404)
+
+    async def _file_response(self, full_path, stat_result, scope) -> Response:
+        """内容 ETag + no-cache；先判条件请求，再决定 304 还是 200。
+
+        ETag 要读文件并算哈希，是同步 I/O：放进线程池执行，避免阻塞
+        事件循环（开场视频 4.7 MB，慢盘下同步读会把同进程其他请求一起拖住）。
+        """
+        request_headers = Headers(scope=scope)
+        response = FileResponse(full_path, stat_result=stat_result)
+        response.headers["etag"] = await anyio.to_thread.run_sync(self._etag_for, full_path)
+        response.headers.setdefault("Cache-Control", "no-cache")
+        if self.is_not_modified(response.headers, request_headers):
+            return NotModifiedResponse(response.headers)
+        return response
+
+    def _should_use_range(self, http_if_range, *args, **kwargs) -> bool:
+        """If-Range 必须与本次**实际发出**的校验器比较（RFC 7233 §3.2）。
+
+        父类实现随 Starlette 版本变化：0.40 的 `_should_use_range` 是
+        classmethod，会拿 stat_result 重新用 mtime+size 生成 ETag，读不到
+        这里覆盖的内容 ETag。后果是客户端带着内容 ETag 请求续传时被判为
+        不匹配，服务端退回完整 200，视频拖动/断点续传退化成全量下载。
+        requirements.txt 只锁 `fastapi>=0.110`，该版本组合是可能出现的。
+
+        这里统一读 self.headers，并用 *args 兼容父类的两种调用形态
+        （旧版会多传一个 stat_result，忽略即可）。
+        """
+        if not http_if_range:
+            return False
+        return (
+            http_if_range == self.headers.get("etag")
+            or http_if_range == self.headers.get("last-modified")
+        )
+
+
 # 游戏挂在 /game/（Gradio 占根路径；/api/* 已在 Gradio 挂载前注册，保持可用）
-app.mount("/game", StaticFiles(directory=BASE_DIR, html=True), name="game")
+app.mount("/game", RevalidatingStaticFiles(directory=BASE_DIR, html=True), name="game")
 
 if gr is not None:
     # 统一入口：Gradio 提供根路径 UI + 文档 + 静态资源，原 FastAPI 应用作为宿主

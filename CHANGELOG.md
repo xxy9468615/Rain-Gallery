@@ -42,11 +42,35 @@
 - **切后台/失焦时旁白仍在出声**：`suspendMaster()` 原先复用
   `syncIntroVideoMute()`（写入全局静音，通常为 false），反而把视频解除静音。
   改为 `syncIntroVideoMute(true)` 强制静音，回前台再按全局静音恢复。
+- **静态资源无 Cache-Control，新旧模块混存导致开局点不动**：`/game/` 原先是裸
+  `StaticFiles`，只发 `ETag` / `Last-Modified`，浏览器对 js/css 走启发式缓存，
+  可静默复用数十天前的脚本；而 `?v=` 参数自 6 号起一直是 `3.6.0`，跨多个版本没变，
+  「改 URL 就失效」这条防线实际不存在。真机复现：新 `index.html` + 新 `game.js`
+  配缓存里的旧 `audio.js`（无 `bindIntroVideo`）→ `bindEvents` 抛
+  `TypeError: audio.bindIntroVideo is not a function` → 整段事件绑定未执行 →
+  点「开始游戏」毫无反应，控制台只有一条难读的 `not a function`。
+  两处一起修：`app.py` 换 `RevalidatingStaticFiles`，静态响应显式
+  `Cache-Control: no-cache`（每次都回源校验，ETag 命中走 304，不重复下 4.7 MB 视频）；
+  `js/game.js` 调用前加 `typeof` 能力探测，模块错配时静音联动降级而不是拖垮整页绑定。
+- **资源缓存参数与版本脱节**：`index.html` 与各模块 import 的 `?v=` 仍停在 `3.6.0`，
+  本版已到 `3.8.0`。统一升到 `3.8.0`，并在静态回归里加了对账断言——资源版本号
+  与 `CHANGELOG` 顶部版本不一致即报红，杜绝「代码升了、缓存参数没升」再次静默发生。
+  对账时完整取出 `?v=` 的值再比：早先只匹配 `[\d.]+`，`?v=legacy` 取不到值就被
+  `v &&` 短路跳过，等于给漏改留了后门（CodeRabbit 抓到）。
+- **Starlette 的 ETag 不含内容，且校验器优先级随版本漂移**：父类 ETag 是
+  `md5(st_mtime + "-" + st_size)`，同秒内同大小的两次改写会算出同一个 ETag
+  （本地已复现：内容 `AAAA` → `BBBB`、mtime/size 不变，两者 ETag 完全相同），
+  「内容变了但校验码没变」正是本类故障的根因。同时不同 Starlette 版本对
+  `If-None-Match` / `If-Modified-Since` 的优先级处理不一致，而 `requirements.txt`
+  只锁 `fastapi>=`，starlette 随依赖漂移。改为 `RevalidatingStaticFiles` 自己实现：
+  ETag 取文件内容的 SHA-256；`is_not_modified` 在请求带 `If-None-Match` 时只看
+  ETag、立即返回，绝不落到秒精度的 `If-Modified-Since`（RFC 7232 §3.3）；
+  405/401/404/目录重定向等父类语义原样保留。
 
 ### Verification
 
 - `tools/check-syntax.mjs` 全模块 + 跨模块引用 + 块注释配对通过
-- `tools/proxy-base-test.mjs` 211 条断言全通过（第 12 节开场视频契约 31 条，
+- `tools/proxy-base-test.mjs` 227 条断言全通过（第 12 节开场视频契约 31 条 · 第 13 节缓存新鲜度 16 条，
   含上述三处修复的回归断言与 README 断言数对账）
 - `tools/e2e-real.mjs`（真实 backend :8092 + 真实上游 `gemma-4-31B-it` + Playwright Chromium）
   - 开场链路真机跑通：`开始游戏` → `跳过速报` → `进入调查` → 物证 11/11 → `进入审讯`

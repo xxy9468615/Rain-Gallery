@@ -1,0 +1,105 @@
+# -*- coding: utf-8 -*-
+"""============================================================
+ 静态资源的强校验码（ETag）生成
+ ------------------------------------------------------------
+ 只依赖标准库，便于在「不装 fastapi/starlette」的 CI 静态 job 里
+ 做零依赖行为测试；框架接线（StaticFiles 子类）留在 app.py。
+
+ 为什么不直接用 Starlette 的 ETag：
+   父类是 md5(st_mtime + "-" + st_size)，**不含文件内容**。同一秒内
+   同样大小的两次改写会算出同一个 ETag，客户端拿到 304 继续用旧脚本
+   ——「内容变了但校验码没变」正是缓存陈旧故障的根因。
+============================================================"""
+import hashlib
+import os
+
+#: 超过此大小不做内容哈希（避免把超大文件反复读进内存），
+#: 退化为 mtime+size 版本。当前游戏素材（含 4.7 MB 开场视频）均小于它。
+HASH_CONTENT_MAX_BYTES = 8 * 1024 * 1024
+
+#: (路径, mtime_ns, ctime_ns, size, inode) → ETag 的结果缓存。
+#: 浏览器带 Cache-Control: no-cache 时**每次页面加载都会回源校验**，
+#: 若每次都重读 4.7 MB 视频算 SHA-256，代价过高；用 stat 指纹命中缓存。
+#:
+#: 指纹**不能只用 mtime+size**：部署工具（rsync -t / tar -p / 镜像层）
+#: 会保留 mtime，恰好可能造成「内容变了、mtime 与大小都没变」。ctime 由
+#: 内核在写入/改属性时更新且无法由用户态回拨，inode 可识别整文件替换，
+#: 两者一起才能覆盖这种场景（CodeRabbit 抓到）。
+_ETAG_CACHE = {}
+_ETAG_CACHE_LIMIT = 512
+
+
+def parse_etags(value) -> list:
+    """按 RFC 9110 解析 If-None-Match：引号内的逗号不是分隔符。
+
+    `"a,*,b"` 是**一个**合法实体标签（标签内允许逗号与星号）；直接
+    ``value.split(",")`` 会把它切成三段，其中裸 ``*`` 被误判为通配符，
+    导致对不匹配的请求错误返回 304。这里按引号状态切分，保留引号本身。
+    """
+    tags = []
+    buf = []
+    in_quotes = False
+    for ch in value or "":
+        if ch == '"':
+            in_quotes = not in_quotes
+            buf.append(ch)
+        elif ch == "," and not in_quotes:
+            piece = "".join(buf).strip()
+            if piece:
+                tags.append(piece)
+            buf = []
+        else:
+            buf.append(ch)
+    piece = "".join(buf).strip()
+    if piece:
+        tags.append(piece)
+    return tags
+
+
+def content_etag(full_path, max_bytes=HASH_CONTENT_MAX_BYTES) -> str:
+    """按文件内容生成强 ETag；超过 max_bytes 时退化为「元数据指纹」版本。
+
+    返回带双引号的强校验器（如 ``"a1b2…"``），可直接用于 If-None-Match 比较。
+    同一内容必得同一 ETag；mtime 变化但内容不变时 ETag 保持不变（避免无谓重传）。
+
+    读取与哈希是**同步 I/O**：在 async 请求路径里调用时必须放进线程
+    （``anyio.to_thread.run_sync``），否则会阻塞事件循环。
+    命中 _ETAG_CACHE 时只做一次 os.stat，不再读文件。
+
+    退化分支不是「mtime+size」而是「任何写入都会变」的元数据指纹：
+    带上 ctime_ns 与 inode。否则超过阈值的文件一旦被同大小改写并保留
+    mtime，就会重新出现「内容变了、校验码没变」的问题（CodeRabbit 抓到）。
+    缓存键包含 max_bytes，避免同一文件在两种策略间串用结果。
+    """
+    st = os.stat(full_path)
+    ctime_ns = getattr(st, "st_ctime_ns", int(st.st_ctime * 1e9))
+    ino = getattr(st, "st_ino", 0)
+    key = (
+        os.path.abspath(full_path),
+        max_bytes,
+        st.st_mtime_ns,
+        ctime_ns,
+        st.st_size,
+        ino,
+    )
+    cached = _ETAG_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    if st.st_size <= max_bytes:
+        h = hashlib.sha256()
+        with open(full_path, "rb") as f:
+            for chunk in iter(lambda: f.read(256 * 1024), b""):
+                h.update(chunk)
+        base = f"content-{st.st_size}-{h.hexdigest()}"
+    else:
+        # 不读内容，但用「写入必变」的元数据：ctime 用户态不可回拨，
+        # inode 可识别整文件替换；mtime_ns 提供跨重启的稳定指纹。
+        base = f"meta-{st.st_size}-{st.st_mtime_ns}-{ctime_ns}-{ino}"
+    etag = '"' + hashlib.sha256(base.encode()).hexdigest()[:32] + '"'
+
+    # 简单的容量上限：条目只增不减会随部署次数缓慢增长（服务重启即清零）
+    if len(_ETAG_CACHE) >= _ETAG_CACHE_LIMIT:
+        _ETAG_CACHE.clear()
+    _ETAG_CACHE[key] = etag
+    return etag

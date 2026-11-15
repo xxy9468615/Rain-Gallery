@@ -4,9 +4,9 @@
  * 进度自动保存（SafeStorage 封装 localStorage，无痕模式自动降级内存），重进续玩
  * ============================================================ */
 
-import { CASE } from './case-data.js?v=3.6.0';
-import { audio, scheduleThunder } from './audio.js?v=3.6.0';
-import { storage } from './storage.js?v=3.6.0';
+import { CASE } from './case-data.js?v=3.8.0';
+import { audio, scheduleThunder } from './audio.js?v=3.8.0';
+import { storage } from './storage.js?v=3.8.0';
 import {
   aiSettings, MODEL_OPTIONS, testConnection, STORAGE_MODE,
   onLoadState, validateTokenFormat,
@@ -15,17 +15,17 @@ import {
   getEndpointUrl, setEndpointUrl, validateEndpointUrl, getEndpointWhitelist, setEndpointWhitelist,
   getProxyBase, setProxyBase, validateProxyBase,
   DEFAULT_ENDPOINT_URL,
-} from './ai-client.js?v=3.6.0';
+} from './ai-client.js?v=3.8.0';
 import {
   suspectState, stageOf, askSuspect, presentToSuspect,
   greetingOf, juryVerdict, setActionContext, getDecisionLog, applyRel, replaceDecisionLog,
-} from './suspect-ai.js?v=3.6.0';
+} from './suspect-ai.js?v=3.8.0';
 import {
   buildProfile, aiProfileReport, radarSVG,
-} from './profiler.js?v=3.6.0';
+} from './profiler.js?v=3.8.0';
 import {
   requestHint, hintPenalty, hintsLeft, HINT_LIMIT, fallbackHint,
-} from './hint.js?v=3.6.0';
+} from './hint.js?v=3.8.0';
 
 const $ = (id) => document.getElementById(id);
 const SAVE_KEY = 'rain-gallery-save';
@@ -3049,7 +3049,10 @@ function initVisualizerAndAudioControls() {
 
   // 开场案情速报视频：跟随全局静音（画面自带旁白，这里只做声音治理）
   const introVideo = $('intro-video');
-  if (introVideo) audio.bindIntroVideo(introVideo);
+  // 取到的 audio.js 可能是浏览器缓存里的旧版（无此方法）。这种错配不该让
+  // 整个 bindEvents 抛出，否则开场按钮、设置、审讯全都绑不上——玩家看到的是
+  // 「点了开始游戏毫无反应」。静音联动是锦上添花，缺席时按可播即可继续。
+  if (introVideo && typeof audio.bindIntroVideo === 'function') audio.bindIntroVideo(introVideo);
 
   // 声波律动仪
   const visualizer = $('audio-visualizer');

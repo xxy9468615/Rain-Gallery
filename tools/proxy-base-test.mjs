@@ -19,6 +19,7 @@
  * 用法：node tools/proxy-base-test.mjs
  * ============================================================ */
 import { readFileSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,7 +59,7 @@ function pythonCmd() {
  * 1. 基址校验矩阵（真跑 js/ai-client.js 的导出函数）
  * ============================================================ */
 section('1 · 代理基址校验矩阵');
-const { validateProxyBase, setProxyBase, getProxyBase } = await import('../js/ai-client.js?v=3.6.0');
+const { validateProxyBase, setProxyBase, getProxyBase } = await import('../js/ai-client.js?v=3.8.0');
 
 const ACCEPT = ['', 'https://h', 'https://h/', 'https://host.example', 'http://127.0.0.1:8092'];
 const REJECT = [
@@ -266,7 +267,7 @@ print(_strip_quotes(sys.argv[1]))
 section('8 · 模型 ID 配置链与流式思维链剥离');
 {
   const { aiSettings, stripThinking, MODEL_OPTIONS, rotateSessionId, proxyState } =
-    await import('../js/ai-client.js?v=3.6.0');
+    await import('../js/ai-client.js?v=3.8.0');
 
   // 8.1 setModel(x) → getModel() === x：任何非空 ID 都是合法模型
   // 分两条腿测，缺一条就漏：
@@ -285,7 +286,7 @@ section('8 · 模型 ID 配置链与流式思维链剥离');
     if (aiSettings.getModel() !== m) { keepOk = false; keepDetail.push(`${m} → ${aiSettings.getModel()}`); }
 
     // 冷启动分支：换一个全新模块实例（相当于刷新页面）
-    const fresh = await import('../js/ai-client.js?v=3.6.0&cold=' + encodeURIComponent(m));
+    const fresh = await import('../js/ai-client.js?v=3.8.0&cold=' + encodeURIComponent(m));
     if (fresh.aiSettings.getModel() !== m) {
       coldOk = false;
       coldDetail.push(`${m} → ${fresh.aiSettings.getModel()}`);
@@ -332,7 +333,7 @@ section('8 · 模型 ID 配置链与流式思维链剥离');
  * ============================================================ */
 section('9 · 求助系统（方向性提示 + 计分惩罚）');
 {
-  const { hintPenalty, hintsLeft, HINT_LIMIT, sanitizeHint } = await import('../js/hint.js?v=3.6.0');
+  const { hintPenalty, hintsLeft, HINT_LIMIT, sanitizeHint } = await import('../js/hint.js?v=3.8.0');
 
   // 9.1 扣分曲线：每次 -2、封顶 -6，脏数据归零不返负
   const penCases = [[0, 0], [1, 2], [2, 4], [3, 6], [4, 6], [-1, 0], [undefined, 0], ['2', 4]];
@@ -348,7 +349,7 @@ section('9 · 求助系统（方向性提示 + 计分惩罚）');
   t(hintsLeft(0) === 3 && hintsLeft(3) === 0 && hintsLeft(9) === 0, '剩余次数不返负');
 
   // 9.3 合规闸：方向性提示放行，代写问句/物证名/结论/引号复述/paraphrase 一律拦
-  const { CASE } = await import('../js/case-data.js?v=3.6.0');
+  const { CASE } = await import('../js/case-data.js?v=3.8.0');
   const sus = CASE.suspects.find((s) => s.id === 'chenmo');
   const known = CASE.evidences.slice(0, 2);
   const badHints = [
@@ -428,7 +429,7 @@ section('11 · 第二轮评审修复回归');
   const gitattr = read('.gitattributes');
   const devSrc = read('tools/dev-server.sh');
   const htmlSrc = read('index.html');
-  const { createStreamSanitizer, withTimeout } = await import('../js/ai-client.js?v=3.6.0');
+  const { createStreamSanitizer, withTimeout } = await import('../js/ai-client.js?v=3.8.0');
 
   // 11.1（Major）流式思维链：跨 chunk 有状态剥离，两处分支都接 sanitizer
   t(/function createStreamSanitizer\(\)/.test(aiSrc), '流式剥离改为跨 chunk 有状态');
@@ -882,6 +883,211 @@ section('12 · 开场案情速报视频契约');
   }
   t(/syncIntroVideoMute\(forceMute\s*=\s*false\)/.test(audioSrc),
     'syncIntroVideoMute 支持强制静音参数');
+}
+
+/* ============================================================
+ * 13. 静态资源的缓存新鲜度契约
+ * ------------------------------------------------------------
+ * 起因是线上真故障：?v= 参数从 6 号起一直是 3.6.0，而 index.html / css / js
+ * 在 11 月 14 号大改。浏览器命中本地缓存后，新 index.html + 新 game.js 配
+ * 旧 audio.js（6154b2b 版，没有 bindIntroVideo）→ TypeError → bindEvents
+ * 整段未执行 → 点「开始游戏」毫无反应，且控制台只有一条难读的 not a function。
+ *
+ * 三条防线必须同时在，缺一条就退化成同一个故障：
+ *   1) 服务端不发启发式缓存：静态响应显式带 Cache-Control: no-cache
+ *   2) 客户端跨模块调用做能力探测：缺方法时降级，而不是让整段绑定崩掉
+ *   3) 版本参数随发布真正失效：?v= 与代码内容挂钩，而不是常年不动
+ * ============================================================ */
+section('13 · 静态资源缓存新鲜度（避免新旧模块混存）');
+{
+  const appPy = read('app.py');
+  const html = read('index.html');
+  const gameSrc = read('js/game.js');
+
+  // 13.1 服务端：/game/ 必须走「强制 revalidate」的静态托管，而不是裸 StaticFiles
+  t(/class RevalidatingStaticFiles\(/.test(appPy), 'app.py 定义了强制 revalidate 的静态类');
+  t(/app\.mount\("\/game",\s*RevalidatingStaticFiles\(/.test(appPy),
+    '/game/ 使用 RevalidatingStaticFiles 挂载（不再裸 StaticFiles）');
+  t(/Cache-Control"\s*,\s*"no-cache"/.test(appPy),
+    '静态响应显式声明 Cache-Control: no-cache');
+  // no-cache 不是"不缓存"，是"每次使用前校验"：ETag 命中仍走 304，别被误改成 no-store
+  t(!/Cache-Control"\s*,\s*"no-store"/.test(appPy),
+    '未误用 no-store（会彻底禁用缓存并让视频每次全量重下）');
+  t(/async def get_response\(self,\s*path,\s*scope\)/.test(appPy),
+    'get_response 签名与当前 Starlette 一致（path, scope）');
+
+  // 13.2 客户端：跨模块调用先做能力探测，缺方法时降级而不是抛异常打断绑定
+  t(/typeof audio\.bindIntroVideo === 'function'/.test(gameSrc),
+    'game.js 调用 bindIntroVideo 前做能力探测（旧 audio.js 不会炸 bindEvents）');
+
+  // 13.3 校验器语义：Starlette 的 ETag 只含 mtime+size、不含内容，
+  //      且不同版本对两个校验器的优先级不一致，因此必须自己实现：
+  //        a) ETag 基于文件内容
+  //        b) 请求带 If-None-Match 时忽略 If-Modified-Since（RFC 7232 §3.3）
+  t(/_etag_for\(/.test(appPy) && /content_etag\(/.test(appPy)
+    && /hashlib\.sha256\(\)/.test(read('static_cache.py')),
+    'ETag 由文件内容哈希生成（独立模块 static_cache.py，不再沿用 mtime+size）');
+  {
+    // 行为级验证，而不是只 grep 源码：构造两个「mtime 与大小完全相同、
+    // 内容不同」的文件，直接调用真实实现的 _etag_for。Starlette 原版
+    // 在这个场景下会给出同一个 ETag（正是故障根因），必须能区分开。
+    const py = pythonCmd();
+    if (!py) {
+      console.log('  \x1b[33m⚠\x1b[0m 内容 ETag 行为验证跳过（python 不可用）');
+    } else {
+      const script = [
+        'import os, sys, tempfile',
+        'sys.path.insert(0, os.getcwd())',
+        'from static_cache import content_etag',   // 只依赖标准库
+        'd = tempfile.mkdtemp()',
+        'a = os.path.join(d, "a.js"); b = os.path.join(d, "b.js")',
+        'open(a, "wb").write(b"AAAA"); open(b, "wb").write(b"BBBB")',
+        'os.utime(a, (1000000000, 1000000000)); os.utime(b, (1000000000, 1000000000))',
+        'ea, eb = content_etag(a), content_etag(b)',
+        // 内容不变、仅 mtime 变化 → ETag 必须保持不变（避免无谓重传）
+        'os.utime(a, (1100000000, 1100000000))',
+        'ea2 = content_etag(a)',
+        // 强校验器必须是带引号的合法 ETag 形态
+        'ok_shape = ea.startswith(chr(34)) and ea.endswith(chr(34)) and len(ea) > 20',
+        // 部署工具的极限场景：同大小改写内容后把 mtime 回拨到原值
+        // （rsync -t / tar -p 会这样做）。缓存键若只看 mtime+size，
+        // 这里会命中旧 ETag，客户端拿到 304 继续用错的旧脚本。
+        'open(a, "wb").write(b"CCCC")',
+        'os.utime(a, (1000000000, 1000000000))',
+        'ea3 = content_etag(a)',
+        // 退化分支（max_bytes 很小）同样不能因 mtime 回拨而返回旧校验码
+        'big = os.path.join(d, "big.bin")',
+        'open(big, "wb").write(b"AAAA"); os.utime(big, (1000000000, 1000000000))',
+        'ebig1 = content_etag(big, max_bytes=1)',
+        'open(big, "wb").write(b"BBBB"); os.utime(big, (1000000000, 1000000000))',
+        'ebig2 = content_etag(big, max_bytes=1)',
+        // 缓存键必须区分策略：同一文件两种 max_bytes 不应串用结果
+        'ebig3 = content_etag(big, max_bytes=10**9)',
+        // If-None-Match 解析：引号内的逗号/星号是标签内容，不是分隔符与通配符
+        'from static_cache import parse_etags',
+        'p1 = parse_etags(\'"a,*,b"\')',
+        'p2 = parse_etags(\'*, "x"\')',
+        'p3 = parse_etags(\'"x", W/"y"\')',
+        'parse_ok = (p1 == [\'"a,*,b"\'] and "*" not in p1',
+        '            and "*" in p2 and p2[-1] == \'"x"\'',
+        '            and p3 == [\'"x"\', \'W/"y"\'])',
+        'print("DIFF" if ea != eb else "SAME",',
+        '      "STABLE" if ea == ea2 else "UNSTABLE",',
+        '      "SHAPE" if ok_shape else "BADSHAPE",',
+        '      "MTIME_RESTORED" if ea3 != ea else "MTIME_CACHE_STALE",',
+        '      "FALLBACK_OK" if ebig1 != ebig2 else "FALLBACK_STALE",',
+        '      "POLICY_SEPARATED" if ebig2 != ebig3 else "POLICY_MIXED",',
+        '      "PARSE_OK" if parse_ok else "PARSE_BAD")',
+      ].join('\n');
+      let out = '';
+      try {
+        // app.py 导入时会打印模式提示，只取最后一行结果
+        out = execFileSync(py, ['-c', script], { cwd: ROOT, encoding: 'utf8' })
+          .trim().split('\n').pop().trim();
+      } catch (e) {
+        out = 'ERR:' + String((e && (e.stderr || e.message)) || e).split('\n').slice(-1)[0];
+      }
+      t(out.startsWith('DIFF STABLE SHAPE MTIME_RESTORED FALLBACK_OK POLICY_SEPARATED PARSE_OK'),
+        'ETag 语义完整：内容敏感/mtime 稳定/回拨失效/退化失效/策略隔离/If-None-Match 解析正确', out);
+    }
+  }
+  {
+    // 顺序即语义：先判 If-None-Match 并 return，才允许落到 super()（IMS 分支）
+    const fn = (appPy.match(/def is_not_modified\(self,[\s\S]*?\n\n    (?:async )?def /) || [''])[0];
+    const iInm = fn.indexOf('if_none_match is not None');
+    const iRet = fn.indexOf('return "*" in tags');
+    const iSuper = fn.indexOf('return super().is_not_modified');
+    t(fn.length > 0 && iInm > 0 && iRet > iInm && iSuper > iRet,
+      '带 If-None-Match 时立即按 ETag 判定（不落到 If-Modified-Since）');
+  }
+  t(/def is_not_modified\(self,\s*response_headers,\s*request_headers\)/.test(appPy),
+    '重写了 is_not_modified（不依赖框架版本内部实现）');
+  {
+    // 顺序即正确性：内容 ETag 必须在 is_not_modified() 之前写入响应头，
+    // 否则 304 判定用的是父类那个「不含内容」的 ETag。
+    // 断言限定在 _file_response 函数体内，避免全文件 indexOf 命中注释/别处调用
+    // 而误判顺序（CodeRabbit 建议）。
+    const body = (appPy.match(/async def _file_response\([\s\S]*?\n    (?:async )?def /) || [''])[0];
+    const iSet = body.indexOf('response.headers["etag"]');
+    const iCheck = body.indexOf('self.is_not_modified(response.headers, request_headers)');
+    t(body.length > 0 && iSet >= 0 && iCheck > iSet
+      && /response\.headers\["etag"\] = await anyio\.to_thread\.run_sync\(self\._etag_for/.test(body),
+      '条件判定前已写入内容 ETag，且哈希在线程池执行（不阻塞事件循环）');
+  }
+  // If-Range 必须与「实际发出」的 ETag 比较。Starlette 0.40 的实现是
+  // classmethod，会从 stat_result 重新生成 mtime+size ETag，读不到我们
+  // 覆盖的内容 ETag —— 续传会退化成全量下载，因此必须自己覆写。
+  t(/def _should_use_range\(self,\s*http_if_range/.test(appPy)
+    && /http_if_range == self\.headers\.get\("etag"\)/.test(appPy),
+    'If-Range 与响应头中的内容 ETag 比较（不依赖 Starlette 版本内部实现）');
+  // 父类语义必须原样保留，否则会顺手改坏 405/401/404/目录重定向
+  t(/status_code=405/.test(appPy) && /status_code=401/.test(appPy)
+    && /RedirectResponse\(url=url\)/.test(appPy),
+    '保留 405/401/目录重定向等父类语义');
+
+  // 13.3 缓存参数：静态图里所有 js/css 引用（index.html 的标签 + 各模块内部
+  //      import 的相对路径）都必须带 ?v=，且与 CHANGELOG 顶部版本一致。
+  //     只查 index.html 会有盲区——6 个模块里的 17 处 import 全在它视野外，
+  //     而模块间错版本恰恰是新旧代码混存的高发位置。
+  {
+    const topVer = (read('CHANGELOG.md').match(/## \[(\d+\.\d+\.\d+)\]/) || [])[1];
+    // 动态枚举 js/ 下的全部模块：新增文件自动纳入，不靠手写清单漏测
+    const SHIPPED_JS = (await readdir(resolve(ROOT, 'js')))
+      .filter((f) => f.endsWith('.js')).sort().map((f) => `js/${f}`);
+    // 导入枚举必须覆盖四种合法形态，否则漏掉的引用会被当成「不存在」
+    // 而静默通过（CodeRabbit 抓到）：
+    //   import './a.js';            // 副作用导入
+    //   import "./a.js";            // 双引号
+    //   import { x } from './a.js'; // 具名/默认导入
+    //   await import('./a.js');     // 动态导入
+    const listModuleRefs = (src) => {
+      const out = [];
+      for (const m of src.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(["'])([^"']+)\1/g)) {
+        if (m[2].startsWith('.')) out.push(m[2]);
+      }
+      return out;
+    };
+    // 自测：以上四种形态必须全部被枚举到（防止正则退化成只看 from）
+    {
+      const sample = [
+        "import './side-effect.js';",
+        'import "./double-quoted.js";',
+        "import { x } from './named.js';",
+        'import y from "./default.js";',
+        "const z = await import('./dynamic.js');",
+      ].join('\n');
+      const got = listModuleRefs(sample);
+      t(got.length === 5, '导入枚举覆盖副作用/单双引号/静态/动态四种形态', got.join(' · '));
+    }
+
+    const refs = [];   // {file, spec}
+    for (const m of html.matchAll(/(?:src|href)="((?:js|css)\/[^"]+)"/g)) {
+      refs.push({ file: 'index.html', spec: m[1] });
+    }
+    for (const f of SHIPPED_JS) {
+      for (const spec of listModuleRefs(read(f))) {
+        if (/\.(js|css)(\?|$)/.test(spec)) refs.push({ file: f, spec });
+      }
+    }
+
+    const missing = refs.filter((r) => !/[?&]v=/.test(r.spec))
+      .map((r) => `${r.file} → ${r.spec}`);
+    t(refs.length > 0 && missing.length === 0,
+      `全部 ${refs.length} 处 js/css 引用均带 ?v= 缓存参数（含模块内 import）`,
+      missing.join(' · '));
+
+    // 值必须整段取出再比：早先只匹配 [\d.]+，`?v=legacy` 取不到值就被
+    // `v &&` 短路跳过，等于给漏改留了后门（CodeRabbit 抓到）。缺失、空值、
+    // 非数字一律算不一致，不做任何豁免。
+    const stale = refs.map((r) => {
+      const m = r.spec.match(/[?&]v=([^&#]*)/);
+      return { ...r, v: m ? m[1] : '' };
+    }).filter((r) => !topVer || r.v !== topVer)
+      .map((r) => `${r.file} → ${r.spec}（期望 ?v=${topVer}）`);
+    t(stale.length === 0,
+      `所有 ?v= 与当前版本 ${topVer} 一致（缺值/空值/非数字同样判红）`,
+      stale.join(' · '));
+  }
 }
 
 /* ============================================================
