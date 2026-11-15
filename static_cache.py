@@ -30,7 +30,7 @@ _ETAG_CACHE_LIMIT = 512
 
 
 def content_etag(full_path, max_bytes=HASH_CONTENT_MAX_BYTES) -> str:
-    """按文件内容生成强 ETag；超过 max_bytes 时退化为 mtime+size 版本。
+    """按文件内容生成强 ETag；超过 max_bytes 时退化为「元数据指纹」版本。
 
     返回带双引号的强校验器（如 ``"a1b2…"``），可直接用于 If-None-Match 比较。
     同一内容必得同一 ETag；mtime 变化但内容不变时 ETag 保持不变（避免无谓重传）。
@@ -38,14 +38,22 @@ def content_etag(full_path, max_bytes=HASH_CONTENT_MAX_BYTES) -> str:
     读取与哈希是**同步 I/O**：在 async 请求路径里调用时必须放进线程
     （``anyio.to_thread.run_sync``），否则会阻塞事件循环。
     命中 _ETAG_CACHE 时只做一次 os.stat，不再读文件。
+
+    退化分支不是「mtime+size」而是「任何写入都会变」的元数据指纹：
+    带上 ctime_ns 与 inode。否则超过阈值的文件一旦被同大小改写并保留
+    mtime，就会重新出现「内容变了、校验码没变」的问题（CodeRabbit 抓到）。
+    缓存键包含 max_bytes，避免同一文件在两种策略间串用结果。
     """
     st = os.stat(full_path)
+    ctime_ns = getattr(st, "st_ctime_ns", int(st.st_ctime * 1e9))
+    ino = getattr(st, "st_ino", 0)
     key = (
         os.path.abspath(full_path),
+        max_bytes,
         st.st_mtime_ns,
-        getattr(st, "st_ctime_ns", int(st.st_ctime * 1e9)),
+        ctime_ns,
         st.st_size,
-        getattr(st, "st_ino", 0),
+        ino,
     )
     cached = _ETAG_CACHE.get(key)
     if cached is not None:
@@ -58,7 +66,9 @@ def content_etag(full_path, max_bytes=HASH_CONTENT_MAX_BYTES) -> str:
                 h.update(chunk)
         base = f"content-{st.st_size}-{h.hexdigest()}"
     else:
-        base = f"meta-{st.st_mtime}-{st.st_size}"
+        # 不读内容，但用「写入必变」的元数据：ctime 用户态不可回拨，
+        # inode 可识别整文件替换；mtime_ns 提供跨重启的稳定指纹。
+        base = f"meta-{st.st_size}-{st.st_mtime_ns}-{ctime_ns}-{ino}"
     etag = '"' + hashlib.sha256(base.encode()).hexdigest()[:32] + '"'
 
     # 简单的容量上限：条目只增不减会随部署次数缓慢增长（服务重启即清零）

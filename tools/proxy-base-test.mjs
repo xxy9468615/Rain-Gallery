@@ -955,10 +955,20 @@ section('13 · 静态资源缓存新鲜度（避免新旧模块混存）');
         'open(a, "wb").write(b"CCCC")',
         'os.utime(a, (1000000000, 1000000000))',
         'ea3 = content_etag(a)',
+        // 退化分支（max_bytes 很小）同样不能因 mtime 回拨而返回旧校验码
+        'big = os.path.join(d, "big.bin")',
+        'open(big, "wb").write(b"AAAA"); os.utime(big, (1000000000, 1000000000))',
+        'ebig1 = content_etag(big, max_bytes=1)',
+        'open(big, "wb").write(b"BBBB"); os.utime(big, (1000000000, 1000000000))',
+        'ebig2 = content_etag(big, max_bytes=1)',
+        // 缓存键必须区分策略：同一文件两种 max_bytes 不应串用结果
+        'ebig3 = content_etag(big, max_bytes=10**9)',
         'print("DIFF" if ea != eb else "SAME",',
         '      "STABLE" if ea == ea2 else "UNSTABLE",',
         '      "SHAPE" if ok_shape else "BADSHAPE",',
-        '      "MTIME_RESTORED" if ea3 != ea else "MTIME_CACHE_STALE")',
+        '      "MTIME_RESTORED" if ea3 != ea else "MTIME_CACHE_STALE",',
+        '      "FALLBACK_OK" if ebig1 != ebig2 else "FALLBACK_STALE",',
+        '      "POLICY_SEPARATED" if ebig2 != ebig3 else "POLICY_MIXED")',
       ].join('\n');
       let out = '';
       try {
@@ -968,8 +978,8 @@ section('13 · 静态资源缓存新鲜度（避免新旧模块混存）');
       } catch (e) {
         out = 'ERR:' + String((e && (e.stderr || e.message)) || e).split('\n').slice(-1)[0];
       }
-      t(out.startsWith('DIFF STABLE SHAPE MTIME_RESTORED'),
-        '内容不同 → ETag 不同；仅 mtime 变 → 稳定；mtime 回拨也失效；形态合法', out);
+      t(out.startsWith('DIFF STABLE SHAPE MTIME_RESTORED FALLBACK_OK POLICY_SEPARATED'),
+        'ETag 语义完整：内容敏感、mtime 稳定、回拨失效、退化分支失效、策略不串用', out);
     }
   }
   {
