@@ -920,6 +920,65 @@ section('13 · 静态资源缓存新鲜度（避免新旧模块混存）');
   t(/typeof audio\.bindIntroVideo === 'function'/.test(gameSrc),
     'game.js 调用 bindIntroVideo 前做能力探测（旧 audio.js 不会炸 bindEvents）');
 
+  // 13.3 校验器语义：Starlette 的 ETag 只含 mtime+size、不含内容，
+  //      且不同版本对两个校验器的优先级不一致，因此必须自己实现：
+  //        a) ETag 基于文件内容
+  //        b) 请求带 If-None-Match 时忽略 If-Modified-Since（RFC 7232 §3.3）
+  t(/_etag_for\(/.test(appPy) && /hashlib\.sha256\(\)/.test(appPy),
+    'ETag 由文件内容哈希生成（不再沿用 mtime+size）');
+  {
+    // 行为级验证，而不是只 grep 源码：构造两个「mtime 与大小完全相同、
+    // 内容不同」的文件，直接调用真实实现的 _etag_for。Starlette 原版
+    // 在这个场景下会给出同一个 ETag（正是故障根因），必须能区分开。
+    const py = pythonCmd();
+    if (!py) {
+      console.log('  \x1b[33m⚠\x1b[0m 内容 ETag 行为验证跳过（python 不可用）');
+    } else {
+      const script = [
+        'import importlib.util, os, tempfile',
+        'spec = importlib.util.spec_from_file_location("rg_app", "app.py")',
+        'm = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)',
+        'inst = m.RevalidatingStaticFiles(directory=".")',
+        'd = tempfile.mkdtemp()',
+        'a = os.path.join(d, "a.js"); b = os.path.join(d, "b.js")',
+        'open(a, "wb").write(b"AAAA"); open(b, "wb").write(b"BBBB")',
+        'os.utime(a, (1000000000, 1000000000)); os.utime(b, (1000000000, 1000000000))',
+        'ea, eb = inst._etag_for(a), inst._etag_for(b)',
+        'os.utime(a, (1000000000, 1000000000))',
+        'ea2 = inst._etag_for(a)',
+        'print("DIFF" if ea != eb else "SAME", "STABLE" if ea == ea2 else "UNSTABLE")',
+      ].join('\n');
+      let out = '';
+      try {
+        // app.py 导入时会打印模式提示，只取最后一行结果
+        out = execFileSync(py, ['-c', script], { cwd: ROOT, encoding: 'utf8' })
+          .trim().split('\n').pop().trim();
+      } catch (e) {
+        out = 'ERR:' + String((e && (e.stderr || e.message)) || e).split('\n').slice(-1)[0];
+      }
+      t(out.startsWith('DIFF STABLE'),
+        '同 mtime/同大小、内容不同 → ETag 必须不同且稳定（防内容陈旧 304）', out);
+    }
+  }
+  {
+    // 顺序即语义：先判 If-None-Match 并 return，才允许落到 super()（IMS 分支）
+    const fn = (appPy.match(/def is_not_modified\(self,[\s\S]*?\n    def /) || [''])[0];
+    const iInm = fn.indexOf('if_none_match is not None');
+    const iRet = fn.indexOf('return "*" in tags');
+    const iSuper = fn.indexOf('return super().is_not_modified');
+    t(fn.length > 0 && iInm > 0 && iRet > iInm && iSuper > iRet,
+      '带 If-None-Match 时立即按 ETag 判定（不落到 If-Modified-Since）');
+  }
+  t(/def is_not_modified\(self,\s*response_headers,\s*request_headers\)/.test(appPy),
+    '重写了 is_not_modified（不依赖框架版本内部实现）');
+  t(/self\.is_not_modified\(response\.headers, request_headers\)/.test(appPy)
+    && /response\.headers\["etag"\] = self\._etag_for\(full_path\)/.test(appPy),
+    '条件判定前已把内容 ETag 写入响应头（顺序决定 304 是否正确）');
+  // 父类语义必须原样保留，否则会顺手改坏 405/401/404/目录重定向
+  t(/status_code=405/.test(appPy) && /status_code=401/.test(appPy)
+    && /RedirectResponse\(url=url\)/.test(appPy),
+    '保留 405/401/目录重定向等父类语义');
+
   // 13.3 缓存参数：静态图里所有 js/css 引用（index.html 的标签 + 各模块内部
   //      import 的相对路径）都必须带 ?v=，且与 CHANGELOG 顶部版本一致。
   //     只查 index.html 会有盲区——6 个模块里的 17 处 import 全在它视野外，
@@ -947,12 +1006,16 @@ section('13 · 静态资源缓存新鲜度（避免新旧模块混存）');
       `全部 ${refs.length} 处 js/css 引用均带 ?v= 缓存参数（含模块内 import）`,
       missing.join(' · '));
 
-    const stale = refs.filter((r) => {
-      const v = (r.spec.match(/[?&]v=([\d.]+)/) || [])[1];
-      return v && topVer && v !== topVer;
-    }).map((r) => `${r.file} → ${r.spec}（期望 ${topVer}）`);
+    // 值必须整段取出再比：早先只匹配 [\d.]+，`?v=legacy` 取不到值就被
+    // `v &&` 短路跳过，等于给漏改留了后门（CodeRabbit 抓到）。缺失、空值、
+    // 非数字一律算不一致，不做任何豁免。
+    const stale = refs.map((r) => {
+      const m = r.spec.match(/[?&]v=([^&#]*)/);
+      return { ...r, v: m ? m[1] : '' };
+    }).filter((r) => !topVer || r.v !== topVer)
+      .map((r) => `${r.file} → ${r.spec}（期望 ?v=${topVer}）`);
     t(stale.length === 0,
-      `所有 ?v= 与当前版本 ${topVer} 一致（避免漏升缓存参数）`,
+      `所有 ?v= 与当前版本 ${topVer} 一致（缺值/空值/非数字同样判红）`,
       stale.join(' · '));
   }
 }

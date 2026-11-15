@@ -55,11 +55,22 @@
 - **资源缓存参数与版本脱节**：`index.html` 与各模块 import 的 `?v=` 仍停在 `3.6.0`，
   本版已到 `3.8.0`。统一升到 `3.8.0`，并在静态回归里加了对账断言——资源版本号
   与 `CHANGELOG` 顶部版本不一致即报红，杜绝「代码升了、缓存参数没升」再次静默发生。
+  对账时完整取出 `?v=` 的值再比：早先只匹配 `[\d.]+`，`?v=legacy` 取不到值就被
+  `v &&` 短路跳过，等于给漏改留了后门（CodeRabbit 抓到）。
+- **Starlette 的 ETag 不含内容，且校验器优先级随版本漂移**：父类 ETag 是
+  `md5(st_mtime + "-" + st_size)`，同秒内同大小的两次改写会算出同一个 ETag
+  （本地已复现：内容 `AAAA` → `BBBB`、mtime/size 不变，两者 ETag 完全相同），
+  「内容变了但校验码没变」正是本类故障的根因。同时不同 Starlette 版本对
+  `If-None-Match` / `If-Modified-Since` 的优先级处理不一致，而 `requirements.txt`
+  只锁 `fastapi>=`，starlette 随依赖漂移。改为 `RevalidatingStaticFiles` 自己实现：
+  ETag 取文件内容的 SHA-256；`is_not_modified` 在请求带 `If-None-Match` 时只看
+  ETag、立即返回，绝不落到秒精度的 `If-Modified-Since`（RFC 7232 §3.3）；
+  405/401/404/目录重定向等父类语义原样保留。
 
 ### Verification
 
 - `tools/check-syntax.mjs` 全模块 + 跨模块引用 + 块注释配对通过
-- `tools/proxy-base-test.mjs` 219 条断言全通过（第 12 节开场视频契约 31 条 · 第 13 节缓存新鲜度 8 条，
+- `tools/proxy-base-test.mjs` 225 条断言全通过（第 12 节开场视频契约 31 条 · 第 13 节缓存新鲜度 14 条，
   含上述三处修复的回归断言与 README 断言数对账）
 - `tools/e2e-real.mjs`（真实 backend :8092 + 真实上游 `gemma-4-31B-it` + Playwright Chromium）
   - 开场链路真机跑通：`开始游戏` → `跳过速报` → `进入调查` → 物证 11/11 → `进入审讯`

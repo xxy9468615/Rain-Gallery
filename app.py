@@ -21,17 +21,24 @@
 
  运行：python app.py（默认监听 0.0.0.0:7860，创空间 Gradio SDK 兼容）
 ============================================================"""
+import errno
+import hashlib
 import os
+import stat
 import time
 from datetime import date
 from urllib.parse import urlparse
 
+import anyio
 import httpx
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import Headers, URL
+from starlette.responses import FileResponse, Response
+from starlette.staticfiles import NotModifiedResponse
 
 # ---------------- 配置 ----------------
 # 全部来自环境变量 / 创空间 Secret，代码零硬编码——换上游服务商、换模型只改环境变量。
@@ -406,13 +413,94 @@ class RevalidatingStaticFiles(StaticFiles):
 
     放在文件名里做版本号也只是缓解，漏改一次就又回到同样的坑；缓存策略
     才是根治——URL 不再决定内容是否新鲜，内容校验码才决定。
+
+    为什么不能直接沿用 Starlette 的 ETag 与 is_not_modified
+    ------------------------------------------------------
+    1) Starlette 的 ETag 是 md5(st_mtime + "-" + st_size)，**不含内容**。
+       同一秒内同样大小的两次改写会算出同一个 ETag（本地已复现），
+       而「内容变了但校验码没变」正是本类故障的根因，不能留。
+    2) 不同 Starlette 版本对两个校验器的优先级处理不一致：有的在
+       If-None-Match 不命中后继续退到 If-Modified-Since，而 Last-Modified
+       只到秒精度，就可能对已变更文件错误地回 304。requirements.txt 只锁
+       fastapi>=，starlette 实际版本随依赖漂移，不能把正确性押在框架内部
+       实现上。RFC 7232 §3.3 明确要求：请求带 If-None-Match 时必须忽略
+       If-Modified-Since。
+
+    因此这里自己实现校验器：ETag 取文件内容的强哈希，两个校验器的优先级
+    由本类显式决定，不受 Starlette 版本影响。
     """
 
+    #: 多大的文件才值得算内容哈希；超过则退化为 mtime+size 版本。
+    #: 当前素材（含 4.7 MB 开场视频）均在此阈值以下，走内容哈希。
+    HASH_CONTENT_MAX_BYTES = 8 * 1024 * 1024
+
+    def _etag_for(self, full_path) -> str:
+        """按文件内容生成强 ETag；超出阈值时退化为 mtime+size 版本。"""
+        st = os.stat(full_path)
+        if st.st_size <= self.HASH_CONTENT_MAX_BYTES:
+            h = hashlib.sha256()
+            with open(full_path, "rb") as f:
+                for chunk in iter(lambda: f.read(256 * 1024), b""):
+                    h.update(chunk)
+            base = f"content-{st.st_size}-{h.hexdigest()}"
+        else:
+            base = f"meta-{st.st_mtime}-{st.st_size}"
+        return '"' + hashlib.sha256(base.encode()).hexdigest()[:32] + '"'
+
+    def is_not_modified(self, response_headers, request_headers) -> bool:
+        """RFC 7232 §3.3：请求带 If-None-Match 时只看 ETag，忽略 If-Modified-Since。"""
+        if_none_match = request_headers.get("if-none-match")
+        if if_none_match is not None:
+            tags = [t.strip() for t in if_none_match.split(",")]
+            etag = response_headers.get("etag")
+            if not etag:
+                return False
+            # "*" 表示任意当前表示都算未修改；弱校验器 W/ 前缀需先剥掉再比
+            return "*" in tags or etag in tags or etag in [t.removeprefix("W/") for t in tags]
+        return super().is_not_modified(response_headers, request_headers)
+
     async def get_response(self, path, scope):
-        """解析静态文件并在成功响应上补齐 Cache-Control: no-cache（保留 ETag 协商）。"""
-        response = await super().get_response(path, scope)
-        if response.status_code < 400:
-            response.headers.setdefault("Cache-Control", "no-cache")
+        """解析静态文件；命中条件请求时返回 304，否则补 Cache-Control 后返回 200。"""
+        method = scope.get("method")
+        if method not in ("GET", "HEAD"):
+            raise HTTPException(status_code=405)
+
+        try:
+            full_path, stat_result = await anyio.to_thread.run_sync(self.lookup_path, path)
+        except PermissionError:
+            raise HTTPException(status_code=401)
+        except OSError as exc:
+            if exc.errno == errno.ENAMETOOLONG:
+                raise HTTPException(status_code=404)
+            raise exc
+        except ValueError:
+            raise HTTPException(status_code=404)
+
+        if stat_result and stat.S_ISREG(stat_result.st_mode):
+            return self._file_response(full_path, stat_result, scope)
+        if stat_result and stat.S_ISDIR(stat_result.st_mode) and self.html:
+            index_path = os.path.join(path, "index.html")
+            full_path, stat_result = await anyio.to_thread.run_sync(self.lookup_path, index_path)
+            if stat_result is not None and stat.S_ISREG(stat_result.st_mode):
+                if not scope["path"].endswith("/"):
+                    url = URL(scope=scope)
+                    url = url.replace(path=url.path + "/")
+                    return RedirectResponse(url=url)
+                return self._file_response(full_path, stat_result, scope)
+        if self.html:
+            full_path, stat_result = await anyio.to_thread.run_sync(self.lookup_path, "404.html")
+            if stat_result and stat.S_ISREG(stat_result.st_mode):
+                return FileResponse(full_path, stat_result=stat_result, status_code=404)
+        raise HTTPException(status_code=404)
+
+    def _file_response(self, full_path, stat_result, scope) -> Response:
+        """内容 ETag + no-cache；先判条件请求，再决定 304 还是 200。"""
+        request_headers = Headers(scope=scope)
+        response = FileResponse(full_path, stat_result=stat_result)
+        response.headers["etag"] = self._etag_for(full_path)
+        response.headers.setdefault("Cache-Control", "no-cache")
+        if self.is_not_modified(response.headers, request_headers):
+            return NotModifiedResponse(response.headers)
         return response
 
 
